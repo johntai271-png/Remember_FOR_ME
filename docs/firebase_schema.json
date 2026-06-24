@@ -4,27 +4,55 @@
       "elder": {
         "name": "Ngoại",
         "status": "in_home",
-        "lastSeenAt": 1710000000000
+        "lastSeenAt": 1710000000000,
+        "vitals": {
+          "status": "Normal",
+          "heartRateBpm": 72,
+          "updatedAt": null
+        }
       },
-      "reminders": {
-        "morning": {
-          "time": "08:00",
+      "tasks": {
+        "task_001": {
+          "name": "Prepare morning medicine",
+          "scheduled_time": "08:00",
+          "is_auto": true,
+          "status": "Pending",
           "text": "Ngoại ơi đến giờ uống thuốc sáng",
           "is_triggered": false,
-          "triggeredAt": null
+          "triggeredAt": null,
+          "spokenAt": null,
+          "completedAt": null,
+          "triggerMode": null
         },
-        "noon": {
-          "time": "12:00",
-          "text": "Ngoại ơi đến giờ ăn trưa",
+        "task_002": {
+          "name": "Call before lunch",
+          "scheduled_time": "11:30",
+          "is_auto": false,
+          "status": "Pending",
+          "text": "Ngoại ơi chuẩn bị ăn trưa",
           "is_triggered": false,
-          "triggeredAt": null
+          "triggeredAt": null,
+          "spokenAt": null,
+          "completedAt": null,
+          "triggerMode": null
         },
-        "evening": {
-          "time": "19:00",
+        "task_003": {
+          "name": "Check evening routine",
+          "scheduled_time": "19:00",
+          "is_auto": true,
+          "status": "Pending",
           "text": "Ngoại ơi đến giờ uống thuốc tối",
           "is_triggered": false,
-          "triggeredAt": null
+          "triggeredAt": null,
+          "spokenAt": null,
+          "completedAt": null,
+          "triggerMode": null
         }
+      },
+      "emergency": {
+        "is_triggered": false,
+        "message": null,
+        "triggeredAt": null
       },
       "tracker_alert": {
         "is_active": false,
@@ -45,35 +73,6 @@
         "tagId": "SMART_TAG_UUID",
         "lastDetectedAt": null,
         "rssi": null
-      },
-      "tasks": {
-        "task_001": {
-          "name": "Prepare morning medicine",
-          "scheduled_time": "08:00",
-          "is_auto": true,
-          "status": "Pending",
-          "lastTriggeredAt": null,
-          "completedAt": null,
-          "triggerMode": null
-        },
-        "task_002": {
-          "name": "Call before lunch",
-          "scheduled_time": "11:30",
-          "is_auto": false,
-          "status": "Pending",
-          "lastTriggeredAt": null,
-          "completedAt": null,
-          "triggerMode": null
-        },
-        "task_003": {
-          "name": "Check evening routine",
-          "scheduled_time": "19:00",
-          "is_auto": true,
-          "status": "Pending",
-          "lastTriggeredAt": null,
-          "completedAt": null,
-          "triggerMode": null
-        }
       }
     }
   }

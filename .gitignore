@@ -12,4 +12,6 @@ kiosk_app/android/local.properties
 kiosk_app/.idea/
 *.iml
 *.log
+.claude/
+CLAUDE.md
 

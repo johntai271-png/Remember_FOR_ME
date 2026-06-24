@@ -46,8 +46,8 @@ export default function App() {
     locationLabel: "In Home",
     lastSeenAt: Date.now() - 2 * 60 * 1000,
     vitals: {
-      status: "Normal",
-      heartRateBpm: 72,
+      status: "No data",
+      heartRateBpm: null,
     },
   });
 
@@ -98,7 +98,7 @@ export default function App() {
           autoRun: !!val.is_auto,
           status: (val.status as RoutineStatus) || "Pending",
           note: formatTaskNote(val),
-          updatedAt: val.updatedAt || val.completedAt || val.lastTriggeredAt || undefined,
+          updatedAt: val.updatedAt || val.completedAt || val.triggeredAt || val.lastTriggeredAt || undefined,
         };
       });
 
@@ -149,7 +149,10 @@ export default function App() {
         return {
           ...currentTask,
           status: "Running",
-          lastTriggeredAt: Date.now(),
+          text: routine.name,
+          is_triggered: true,
+          triggeredAt: Date.now(),
+          spokenAt: null,
           completedAt: null,
           updatedAt: Date.now(),
           triggerMode: "manual",
@@ -161,41 +164,9 @@ export default function App() {
         return;
       }
 
-      pushToast(`Triggered ${routine.name}.`);
-
-      // Bridge to Flutter kiosk reminders (morning/noon/evening)
-      let reminderKey = "";
-      const lowerName = routine.name.toLowerCase();
-      if (id === "task_001" || id === "routine-1" || lowerName.includes("morning")) {
-        reminderKey = "morning";
-      } else if (id === "task_002" || id === "routine-2" || lowerName.includes("lunch") || lowerName.includes("noon")) {
-        reminderKey = "noon";
-      } else if (id === "task_003" || id === "routine-3" || lowerName.includes("evening") || lowerName.includes("night")) {
-        reminderKey = "evening";
-      } else {
-        // Fallback: choose morning
-        reminderKey = "morning";
-      }
-
-      if (reminderKey) {
-        await updatePath(`reminders/${reminderKey}`, {
-          is_triggered: true,
-          triggeredAt: Date.now(),
-          text: routine.name,
-          time: routine.time,
-        });
-      }
-
-      // Wait to simulate running delay
-      await new Promise((resolve) => setTimeout(resolve, 1400));
-
-      // Mark completed
-      await updatePath(`tasks/${id}`, {
-        status: "Completed",
-        completedAt: Date.now(),
-        updatedAt: Date.now(),
-        triggerMode: "manual",
-      });
+      // Kiosk sẽ phát nhắc rồi ghi spokenAt + status="Completed" về DB.
+      // Trạng thái Completed hiển thị qua listener `tasks`, không tự set ở đây.
+      pushToast(`Sent "${routine.name}" to the kiosk.`);
     } catch (error) {
       console.error(error);
       pushToast(`Failed to trigger ${routine.name}.`);
@@ -220,6 +191,7 @@ export default function App() {
     try {
       await updatePath(`tasks/${id}`, {
         name: routine.name.trim(),
+        text: routine.name.trim(),
         scheduled_time: routine.time,
         is_auto: routine.autoRun,
         updatedAt: Date.now(),
@@ -248,9 +220,12 @@ export default function App() {
       scheduled_time: "09:00",
       is_auto: false,
       status: "Pending",
+      text: "",
+      is_triggered: false,
       createdAt: Date.now(),
       updatedAt: Date.now(),
-      lastTriggeredAt: null,
+      triggeredAt: null,
+      spokenAt: null,
       completedAt: null,
       triggerMode: null,
     };
@@ -271,17 +246,10 @@ export default function App() {
   const handleSendEmergency = async () => {
     setShowEmergencyModal(false);
     try {
-      // Trigger both path triggers for kiosk speaker integration and logging
       await updatePath("emergency", {
         is_triggered: true,
         triggeredAt: Date.now(),
         message: "Ngoại ơi, con đang gọi. Xin hãy nhìn vào màn hình.",
-      });
-
-      await updatePath("emergency_request", {
-        is_active: true,
-        triggeredAt: Date.now(),
-        source: "caregiver_web",
       });
 
       pushToast("Emergency services contacted.");
@@ -397,8 +365,8 @@ function StatusCard({ elder, kiosk }: { elder: any; kiosk: any }) {
 
   const locationLabel = elder.locationLabel || (elder.status === "in_home" ? "In Home" : "Out of Home");
   const relativeTime = elder.lastSeenAt ? formatRelativeTime(elder.lastSeenAt) : "No recent data";
-  const heartRate = elder.vitals?.heartRateBpm || 72;
-  const vitalsStatus = elder.vitals?.status || "Normal";
+  const heartRate = elder.vitals?.heartRateBpm ?? null;
+  const vitalsStatus = elder.vitals?.status || "No data";
 
   return (
     <section className="card-shell p-6 sm:p-8">
@@ -456,7 +424,7 @@ function StatusCard({ elder, kiosk }: { elder: any; kiosk: any }) {
       <div className="mt-6 flex flex-col gap-4 border-t border-slate-200 pt-5 sm:flex-row sm:items-center sm:justify-between">
         <div className="inline-flex items-center gap-3 text-lg font-semibold text-slate-700 sm:text-[18px]">
           <HeartPulse className="h-6 w-6 text-active" />
-          Vitals: {vitalsStatus} ({heartRate} bpm)
+          Vitals: {vitalsStatus}{heartRate != null ? ` (${heartRate} bpm)` : ""}
         </div>
         <button type="button" className="text-xl font-extrabold text-brand transition hover:text-blue-700">
           View Map &gt;
@@ -893,8 +861,9 @@ function formatClock(timeValue: string) {
 }
 
 function formatTaskNote(task: any) {
-  if (task.status === "Running" && task.lastTriggeredAt) {
-    return `Started at ${formatTimestamp(new Date(task.lastTriggeredAt))}`;
+  const startedAt = task.triggeredAt || task.lastTriggeredAt;
+  if (task.status === "Running" && startedAt) {
+    return `Started at ${formatTimestamp(new Date(startedAt))}`;
   }
   if (task.status === "Completed" && task.completedAt) {
     return `Completed at ${formatTimestamp(new Date(task.completedAt))}`;
