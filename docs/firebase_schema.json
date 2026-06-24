@@ -1,0 +1,80 @@
+{
+  "families": {
+    "family_001": {
+      "elder": {
+        "name": "Ngoại",
+        "status": "in_home",
+        "lastSeenAt": 1710000000000
+      },
+      "reminders": {
+        "morning": {
+          "time": "08:00",
+          "text": "Ngoại ơi đến giờ uống thuốc sáng",
+          "is_triggered": false,
+          "triggeredAt": null
+        },
+        "noon": {
+          "time": "12:00",
+          "text": "Ngoại ơi đến giờ ăn trưa",
+          "is_triggered": false,
+          "triggeredAt": null
+        },
+        "evening": {
+          "time": "19:00",
+          "text": "Ngoại ơi đến giờ uống thuốc tối",
+          "is_triggered": false,
+          "triggeredAt": null
+        }
+      },
+      "tracker_alert": {
+        "is_active": false,
+        "type": null,
+        "source": "BLE tracker",
+        "message": null,
+        "severity": "normal",
+        "updatedAt": null,
+        "safeZoneStatus": "inside"
+      },
+      "kiosk": {
+        "online": false,
+        "lastHeartbeatAt": null,
+        "volumeForced": false
+      },
+      "ble": {
+        "enabled": false,
+        "tagId": "SMART_TAG_UUID",
+        "lastDetectedAt": null,
+        "rssi": null
+      },
+      "tasks": {
+        "task_001": {
+          "name": "Prepare morning medicine",
+          "scheduled_time": "08:00",
+          "is_auto": true,
+          "status": "Pending",
+          "lastTriggeredAt": null,
+          "completedAt": null,
+          "triggerMode": null
+        },
+        "task_002": {
+          "name": "Call before lunch",
+          "scheduled_time": "11:30",
+          "is_auto": false,
+          "status": "Pending",
+          "lastTriggeredAt": null,
+          "completedAt": null,
+          "triggerMode": null
+        },
+        "task_003": {
+          "name": "Check evening routine",
+          "scheduled_time": "19:00",
+          "is_auto": true,
+          "status": "Pending",
+          "lastTriggeredAt": null,
+          "completedAt": null,
+          "triggerMode": null
+        }
+      }
+    }
+  }
+}

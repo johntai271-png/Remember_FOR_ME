@@ -1,0 +1,10 @@
+.DS_Store
+caregiver/firebase-config.js
+kiosk_app/android/app/google-services.json
+kiosk_app/.dart_tool/
+kiosk_app/.flutter-plugins
+kiosk_app/.flutter-plugins-dependencies
+kiosk_app/.packages
+kiosk_app/build/
+kiosk_app/android/.gradle/
+kiosk_app/android/local.properties
