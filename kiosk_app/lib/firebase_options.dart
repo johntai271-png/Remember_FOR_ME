@@ -17,44 +17,41 @@ import 'package:flutter/foundation.dart'
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
     if (kIsWeb) {
-      throw UnsupportedError(
-        'DefaultFirebaseOptions have not been configured for web - '
-        'you can reconfigure this by running the FlutterFire CLI again.',
-      );
+      return web;
     }
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
         return android;
       case TargetPlatform.iOS:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for ios - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
-      case TargetPlatform.macOS:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for macos - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
-      case TargetPlatform.windows:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for windows - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
-      case TargetPlatform.linux:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for linux - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return ios;
       default:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions are not supported for this platform.',
-        );
+        // Fallback to web/android config for desktop platforms
+        return web;
     }
   }
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyAjApI27K3_a-v_J1qYdm-WZvUU2G00ReA',
     appId: '1:453928856195:android:ddcfdca98b3dd81530c9b6',
+    messagingSenderId: '453928856195',
+    projectId: 'rememberforme-fc18b',
+    databaseURL: 'https://rememberforme-fc18b-default-rtdb.firebaseio.com',
+    storageBucket: 'rememberforme-fc18b.firebasestorage.app',
+  );
+
+  static const FirebaseOptions web = FirebaseOptions(
+    apiKey: 'AIzaSyDXOR8sYBdXYWcb1nFktWJ-mxgc9-NDbPk',
+    appId: '1:453928856195:web:b074f1099dea94dc30c9b6',
+    messagingSenderId: '453928856195',
+    projectId: 'rememberforme-fc18b',
+    databaseURL: 'https://rememberforme-fc18b-default-rtdb.firebaseio.com',
+    storageBucket: 'rememberforme-fc18b.firebasestorage.app',
+    authDomain: 'rememberforme-fc18b.firebaseapp.com',
+  );
+
+  static const FirebaseOptions ios = FirebaseOptions(
+    apiKey: 'AIzaSyDXOR8sYBdXYWcb1nFktWJ-mxgc9-NDbPk',
+    appId: '1:453928856195:ios:someplaceholder',
     messagingSenderId: '453928856195',
     projectId: 'rememberforme-fc18b',
     databaseURL: 'https://rememberforme-fc18b-default-rtdb.firebaseio.com',

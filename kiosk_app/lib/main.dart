@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
@@ -12,20 +13,39 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:volume_controller/volume_controller.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import 'firebase_options.dart';
+
 const familyId = 'family_001';
 const familyPath = 'families/$familyId';
 const defaultEmergencyMessage = 'Ngoại ơi, con đang gọi. Xin hãy nhìn vào màn hình.';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
-  await WakelockPlus.enable();
-  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.landscapeLeft,
-    DeviceOrientation.landscapeRight,
-    DeviceOrientation.portraitUp,
-  ]);
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (e) {
+    debugPrint('Firebase initialization failed: $e');
+  }
+
+  try {
+    await WakelockPlus.enable();
+  } catch (e) {
+    debugPrint('Wakelock failed to enable: $e');
+  }
+
+  try {
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+      DeviceOrientation.portraitUp,
+    ]);
+  } catch (e) {
+    debugPrint('SystemChrome configuration failed: $e');
+  }
+
   runApp(const RememberForMeKiosk());
 }
 
@@ -145,27 +165,36 @@ class _KioskHomePageState extends State<KioskHomePage> {
   }
 
   Future<void> _configureDevice() async {
-    await [
-      Permission.bluetoothScan,
-      Permission.bluetoothConnect,
-      Permission.locationWhenInUse,
-    ].request();
+    if (kIsWeb || defaultTargetPlatform == TargetPlatform.windows) return;
+    try {
+      await [
+        Permission.bluetoothScan,
+        Permission.bluetoothConnect,
+        Permission.locationWhenInUse,
+      ].request();
+    } catch (e) {
+      debugPrint('Device permissions configuration failed: $e');
+    }
   }
 
   Future<void> _configureTts() async {
-    await _tts.setLanguage('vi-VN');
-    await _tts.setSpeechRate(0.42);
-    await _tts.setVolume(1.0);
-    await _tts.awaitSpeakCompletion(true);
-    _tts.setCompletionHandler(() {
-      if (mounted) {
-        setState(() {
-          _activeTitle = null;
-          _activeMessage = null;
-          _isEmergency = false;
-        });
-      }
-    });
+    try {
+      await _tts.setLanguage('vi-VN');
+      await _tts.setSpeechRate(0.42);
+      await _tts.setVolume(1.0);
+      await _tts.awaitSpeakCompletion(true);
+      _tts.setCompletionHandler(() {
+        if (mounted) {
+          setState(() {
+            _activeTitle = null;
+            _activeMessage = null;
+            _isEmergency = false;
+          });
+        }
+      });
+    } catch (e) {
+      debugPrint('TTS configuration failed: $e');
+    }
   }
 
   Future<void> _loadCachedReminders() async {
@@ -266,7 +295,11 @@ class _KioskHomePageState extends State<KioskHomePage> {
     required String message,
     required bool emergency,
   }) async {
-    await VolumeController.instance.setVolume(1.0);
+    try {
+      await VolumeController.instance.setVolume(1.0);
+    } catch (e) {
+      debugPrint('Volume controller not supported on this platform: $e');
+    }
     await _familyRef.child('kiosk/volumeForced').set(true);
     if (mounted) {
       setState(() {
@@ -275,8 +308,12 @@ class _KioskHomePageState extends State<KioskHomePage> {
         _isEmergency = emergency;
       });
     }
-    await _tts.stop();
-    await _tts.speak(message);
+    try {
+      await _tts.stop();
+      await _tts.speak(message);
+    } catch (e) {
+      debugPrint('TTS speak failed: $e');
+    }
   }
 
   void _startHeartbeat() {
@@ -298,6 +335,7 @@ class _KioskHomePageState extends State<KioskHomePage> {
   }
 
   Future<void> _scanForTag() async {
+    if (kIsWeb || defaultTargetPlatform == TargetPlatform.windows) return;
     if (!_bleEnabled) return;
 
     _bleResultsSub ??= FlutterBluePlus.scanResults.listen((results) {
@@ -345,7 +383,10 @@ class _KioskHomePageState extends State<KioskHomePage> {
   void _stopBleScanLoop() {
     _bleScanTimer?.cancel();
     _bleMissingTimer?.cancel();
-    FlutterBluePlus.stopScan();
+    if (kIsWeb || defaultTargetPlatform == TargetPlatform.windows) return;
+    try {
+      FlutterBluePlus.stopScan();
+    } catch (_) {}
   }
 
   @override

@@ -8,3 +8,8 @@ kiosk_app/.packages
 kiosk_app/build/
 kiosk_app/android/.gradle/
 kiosk_app/android/local.properties
+.idea/
+kiosk_app/.idea/
+*.iml
+*.log
+
