@@ -934,33 +934,12 @@ function SettingsDetailPage({
     },
     "elderly-profile": {
       title: "Elderly profile",
-      subtitle: "Update care recipient name",
+      subtitle: "Demo care recipient details",
       body: (
-        <div className="space-y-4">
-          <div className="rounded-[22px] bg-white p-5 border border-slate-200/80">
-            <label className="block text-sm font-bold uppercase tracking-wider text-slate-500">
-              Elder's Name
-            </label>
-            <input
-              type="text"
-              value={elder.name || ""}
-              onChange={(e) => {
-                const newName = e.target.value;
-                setElder((curr: any) => ({ ...curr, name: newName }));
-                // Ghi đè cập nhật lên Firebase Realtime Database ngay lập tức
-                void updateFamilyPath(familyId, "elder", {
-                  ...elder,
-                  name: newName,
-                });
-              }}
-              className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-lg font-semibold focus:border-brand focus:outline-none"
-              placeholder="e.g. Grandma, Mom, Mary"
-            />
-          </div>
-          <p className="text-sm font-medium leading-6 text-slate-500">
-            This name will be dynamically used as the greeting and reassurance banner on the Patient Kiosk.
-          </p>
-        </div>
+        <p className="text-lg font-medium leading-8 text-slate-700">
+          This page will later show personal care preferences, mobility notes,
+          reminder tone preferences, and daily routines shared with the kiosk.
+        </p>
       ),
     },
     "emergency-contacts": {
