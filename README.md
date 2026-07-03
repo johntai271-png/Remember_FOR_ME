@@ -1,94 +1,128 @@
-# Remember.For.Me
+# Remember.For.Me: Ambient Dementia Care Ecosystem (MVP)
 
-**Remember.For.Me** là một dự án MVP demo dùng để hỗ trợ người cao tuổi (người bệnh/ngoại) tại nhà thông qua thiết bị Kiosk, kết hợp với trang quản lý từ xa dành cho người chăm sóc.
+**Remember.For.Me** is a professional Ambient Dementia Care Ecosystem designed to assist elderly individuals with cognitive decline (such as Alzheimer's or dementia) in maintaining safe daily routines at home. The system bridges remote caregiving and home ambient assistance using a real-time, cross-platform architecture.
 
-Hệ thống bao gồm 2 phần chính:
-*   `caregiver/`: Ứng dụng web dành cho người chăm sóc, được xây dựng bằng **React + Vite + Tailwind CSS** và kết nối thời gian thực qua **Firebase Realtime Database**.
-*   `kiosk_app/`: Ứng dụng Kiosk chạy tại nhà người bệnh, được xây dựng bằng **Flutter**, hỗ trợ đa nền tảng (**Android APK**, **Web Chrome**, **Windows Desktop**) tích hợp giọng nói tiếng Việt (TTS).
+The project consists of two core components:
+1. **Caregiver Portal (`/caregiver`)**: A modern web dashboard for family members and caregivers to configure daily schedules, track vitals, monitor Bluetooth tags, and trigger manual reminders. Built with **React + Vite + Tailwind CSS**.
+2. **Patient Kiosk (`/kiosk_app`)**: An ambient, high-legibility home screen for the elderly. Built with **Flutter**, it supports multi-platform deployment (**Android Tablets/TVs**, **Chrome Web**, and **Windows**) and features English Text-to-Speech (TTS) auditory cues.
 
 ---
 
-## Sơ Đồ Quy Trình Hoạt Động (Demo Flow)
+## 🛠️ System Architecture & Demo Flow
 
-```text
-Người chăm sóc bấm nút trên Web Dashboard (React)
-  ↳ Ghi nhận trạng thái công việc và cập nhật Firebase Realtime Database
-      ↳ Thiết bị Kiosk (Flutter) lắng nghe thay đổi lập tức
-          ↳ Hiển thị cảnh báo toàn màn hình + Phát giọng nói tiếng Việt (TTS)
-              ↳ Tự động phản hồi kết quả và thiết lập lại trạng thái ban đầu
+```mermaid
+graph TD
+    C[Caregiver Portal - React Web] -->|1. Configure Routines / Trigger Alerts| F[Firebase Realtime Database]
+    F -->|2. Stream Updates Instantly| K[Patient Kiosk - Flutter App]
+    K -->|3. Display Immersive Overlay + 3x English TTS Cues| P[Patient / Elderly]
+    P -->|4. Acknowledge 'Okay, I remember' Button| K
+    K -->|5. Mark Task Completed & Stop TTS| F
+    F -->|6. Reflect Status on Live Feed| C
 ```
 
 ---
 
-## Cấu Trúc Dự Án (Repository Structure)
+## 📂 Repository Structure
 
-Dưới đây là sơ đồ chi tiết cấu trúc thư mục hiện tại của dự án:
+Below is the detailed project file layout, showcasing the structured organization of both codebases:
 
 ```text
 REMEMBER.FOR.ME/
-├── caregiver/                 # Mã nguồn trang quản lý của người chăm sóc (React)
-│   ├── package.json           # Thư viện và kịch bản khởi chạy web
-│   ├── vite.config.ts         # Cấu hình máy chủ phát triển Vite (cổng 8080)
-│   ├── tailwind.config.js     # Cấu hình CSS Tailwind thiết kế giao diện
+├── caregiver/                 # Caregiver Web Dashboard (React)
+│   ├── package.json           # Node dependencies and build scripts
+│   ├── vite.config.ts         # Vite server configuration (Port 8080)
+│   ├── tailwind.config.js     # Tailwind CSS design system utility classes
 │   └── src/
-│       ├── App.tsx            # Giao diện chính và logic đồng bộ Firebase của Dashboard
-│       ├── firebase.ts        # Hàm khởi tạo Firebase & đọc/ghi DB
-│       ├── index.css          # Token CSS & Styling
-│       └── main.tsx           # Điểm khởi chạy React
+│       ├── App.tsx            # Main state controller and Firebase bindings
+│       ├── firebase.ts        # Firebase Auth & Realtime Database connection
+│       ├── index.css          # Global styling tokens & custom animations
+│       └── main.tsx           # React bootstrap entrypoint
 │
-├── kiosk_app/                 # Mã nguồn ứng dụng nhắc nhở Kiosk (Flutter)
-│   ├── pubspec.yaml           # Thư viện Dart (TTS, Bluetooth, Firebase, Wakelock)
-│   ├── android/               # Dự án Android gốc (chứa google-services.json)
-│   ├── web/                   # Cấu hình chạy ứng dụng Kiosk trên Web Chrome
-│   ├── windows/               # Cấu hình chạy ứng dụng Kiosk trên Windows Desktop
+├── kiosk_app/                 # Ambient Home Kiosk Application (Flutter)
+│   ├── pubspec.yaml           # Flutter packages (TTS, Blue Plus, Google Fonts)
+│   ├── android/               # Native Android configurations (with Gradle support)
+│   ├── web/                   # Web build configuration for Smart TV browsers
+│   ├── windows/               # Native Windows build configuration
 │   └── lib/
-│       ├── firebase_options.dart # Cấu hình Firebase cho đa nền tảng
-│       └── main.dart          # Logic thông báo Kiosk, BLE và giọng nói tiếng Việt
+│       ├── main.dart          # App initialization & global theme setup
+│       ├── firebase_options.dart # Multi-platform Firebase credentials
+│       ├── models/
+│       │   └── task.dart      # Task & DayPart data models (Morning/Afternoon/Evening)
+│       ├── theme/
+│       │   └── app_colors.dart # Cozy warm cream palette inspired by Hân's design
+│       ├── services/
+│       │   └── kiosk_sync.dart # Realtime Firebase sync, BLE scan loops, & simulated vitals
+│       ├── screens/
+│       │   ├── kiosk_home.dart # Kiosk shell containing navigation, top-bar, & TTS loop
+│       │   ├── alert_overlay.dart # Animated twilight blue announcement screen with sound waves
+│       │   └── debug_panel.dart # Simulation panel for mocking GPS geofencing & vitals
+│       ├── tabs/
+│       │   ├── home_tab.dart  # Two-column view: Clock/Reassurance vs. Today's Routine
+│       │   ├── reminders_tab.dart # Grouped schedule timeline matching current period
+│       │   └── health_tab.dart # Health metrics monitoring card (Heart Rate, Location)
+│       └── widgets/
+│           └── reminder_card.dart # Reusable UI widgets for routine timeline items
 │
-├── docs/                      # Thư mục chứa tài liệu và cấu trúc DB mẫu
-│   └── firebase_schema.json   # Cấu trúc JSON mẫu của Firebase Realtime Database
+├── docs/                      # Technical database references
+│   └── firebase_schema.json   # Mock schema definition for the Realtime Database
 │
-├── PROJECT_SUMMARY.md         # Bản tóm tắt các hạng mục đã làm & chi tiết từng file
-├── DEVELOPER_ONBOARDING.md    # Hướng dẫn chi tiết cho lập trình viên mới thiết lập dự án
-└── kiosk-app-release.apk      # File cài đặt ứng dụng Kiosk hoàn chỉnh chạy trên Android
+├── PROJECT_SUMMARY.md         # In-depth architectural analysis and file descriptions
+├── DEVELOPER_ONBOARDING.md    # Step-by-step environment setup guide for new developers
+└── kiosk-app-release.apk      # Compiled standalone Android release package
 ```
 
 ---
 
-## Hướng Dẫn Chạy Nhanh (Quick Start)
+## ⚡ Key Features
 
-### 1. Khởi chạy Caregiver Web App
+*   **Real-time Synchronization**: Instant data binding between caregiver Web Portal and home tablet Kiosk via Firebase RTDB.
+*   **Warm Cream High-Legibility UI**: Soft cream background (`#F9F6F0`) and high-contrast typography designed specifically to reduce glare and visual fatigue for elderly users.
+*   **Triple Auditory Cueing (TTS)**: When a reminder is activated, an English voice reads the description aloud **3 times** at a steady rate, ensuring clarity.
+*   **Audio Announcement Overlay**: Fullscreen deep twilight blue card showing custom pulse ripples representing sound waves. Bypasses TV/tablet standby modes.
+*   **Wandering Protection (BLE Tracker)**: Monitors proximity to Bluetooth Smart Tags to automatically detect if the patient leaves the house, updating status to `Away` and sending warning notifications to caregivers.
+*   **Simulated Vitals**: Heartbeat transmission every 10 seconds and heart-rate fluctuations to keep caregivers informed of the tablet's connectivity status.
+*   **Hardware Exit Blocker**: Uses Flutter `PopScope` to disable back gesture/button, and supports Android's native App Pinning for a 24/7 dedicated device mode.
+
+---
+
+## 🚀 Quick Start Guide
+
+### 1. Launch the Caregiver Portal
+Ensure you have [Node.js](https://nodejs.org/) installed, then run:
 ```bash
 cd caregiver
 npm install
 npm run dev
 ```
-👉 Truy cập trang quản lý tại địa chỉ: **[http://localhost:8080](http://localhost:8080)**.
+👉 Access the Web Dashboard at: **[http://localhost:8080](http://localhost:8080)**.
 
-### 2. Khởi chạy Kiosk App (Flutter)
-Bạn có thể chạy thử nghiệm trực tiếp trên trình duyệt Web hoặc Windows cho nhẹ máy bằng lệnh:
+### 2. Launch the Patient Kiosk (Flutter)
+Ensure you have the [Flutter SDK](https://flutter.dev/) installed, then run:
 ```bash
 cd kiosk_app
 flutter pub get
-# Chạy trên trình duyệt Chrome (Khuyên dùng khi lập trình)
+# Run in Google Chrome (Highly recommended for testing/debugging)
 flutter run -d chrome
-# Hoặc chạy dưới dạng phần mềm Windows
+# Run as a native Windows Desktop application
 flutter run -d windows
 ```
-*(Nếu muốn cài trực tiếp trên máy tính bảng/điện thoại Android thật, hãy sử dụng file **`kiosk-app-release.apk`** ở thư mục gốc).*
+*(For physical TV or Android tablet deployments, install the compiled **`kiosk-app-release.apk`** found at the root of the project).*
 
 ---
 
-## Cơ Sở Dữ Liệu Firebase Paths
+## 🔒 Firebase Realtime Database Paths
 
-Hệ thống sử dụng một gia đình demo mặc định là `families/family_001`. Các nhánh dữ liệu chính bao gồm:
-*   `elder`: Tên, trạng thái vị trí (trong nhà/ngoài nhà), thời điểm nhìn thấy cuối cùng.
-*   `reminders`: Danh sách lịch nhắc nhở buổi sáng (`morning`), trưa (`noon`), tối (`evening`).
-*   `emergency`: Trạng thái kích hoạt cuộc gọi khẩn cấp (`is_triggered`) và nội dung giọng nói thông báo.
-*   `kiosk`: Trạng thái kết nối trực tuyến của thiết bị Kiosk (`online`, `lastHeartbeatAt`).
-*   `ble`: Cấu hình quét cảm biến Bluetooth BLE.
+The ecosystem communicates through a default mock profile path `families/family_001`. Key nodes:
+*   `elder`: Stores patient name, current zone status (`in_home` / `out_of_home`), and timestamp.
+*   `tasks`: List of daily schedules containing `scheduled_time`, `is_auto`, `status`, and `is_triggered`.
+*   `emergency`: Triggers fullscreen red flashing alert for incoming calls or urgent help.
+*   `kiosk`: Health heartbeats from the tablet to monitor network connection (`online` / `lastHeartbeatAt`).
+*   `ble`: Configures UUIDs and parameters for physical Bluetooth proximity scanning.
 
-Để biết thêm thông tin chi tiết về mã nguồn và cách phát triển dự án, vui lòng đọc các tài liệu sau:
-*   **[PROJECT_SUMMARY.md](file:///c:/Users/LENOVO/Downloads/REMEMBERFORME/REMEMBER.FOR.ME/REMEMBER.FOR.ME/PROJECT_SUMMARY.md)**: Chi tiết kiến trúc & mã nguồn.
-*   **[DEVELOPER_ONBOARDING.md](file:///c:/Users/LENOVO/Downloads/REMEMBERFORME/REMEMBER.FOR.ME/REMEMBER.FOR.ME/DEVELOPER_ONBOARDING.md)**: Hướng dẫn cài đặt cho thành viên mới.
+---
 
+## 📖 Additional Project Documentation
+
+For more in-depth development guides and technical overviews:
+*   **[PROJECT_SUMMARY.md](file:///c:/Users/LENOVO/Downloads/REMEMBERFORME/REMEMBER.FOR.ME/REMEMBER.FOR.ME/PROJECT_SUMMARY.md)**: Deep dive into core codebase logic, packages, and database sync.
+*   **[DEVELOPER_ONBOARDING.md](file:///c:/Users/LENOVO/Downloads/REMEMBERFORME/REMEMBER.FOR.ME/REMEMBER.FOR.ME/DEVELOPER_ONBOARDING.md)**: Setup guide for cloning, database configuration, and deployment.
