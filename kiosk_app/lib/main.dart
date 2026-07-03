@@ -2,6 +2,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -69,10 +70,14 @@ class RememberForMeKiosk extends StatelessWidget {
           brightness: Brightness.light,
         ),
         scaffoldBackgroundColor: AppColors.shell,
-        fontFamily: 'Roboto',
+        // Dùng Inter từ Google Fonts — đồng bộ với giao diện web Caregiver
+        textTheme: GoogleFonts.interTextTheme(
+          ThemeData.light().textTheme,
+        ),
         useMaterial3: true,
       ),
       home: const KioskHomePage(),
     );
   }
 }
+

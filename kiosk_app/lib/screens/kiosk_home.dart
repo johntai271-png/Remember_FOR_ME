@@ -45,51 +45,55 @@ class _KioskHomePageState extends State<KioskHomePage> {
   Future<void> _configureTts() async {
     try {
       await _tts.awaitSpeakCompletion(true);
-      await _tts.setSpeechRate(0.42);
+      await _tts.setSpeechRate(0.48); // English speech rate is slightly faster than Vietnamese usually
       await _tts.setVolume(1.0);
       await _tts.setPitch(1.0);
-      await _selectVietnameseVoice();
+      await _selectEnglishVoice();
     } catch (e) {
       debugPrint('TTS configuration failed: $e');
     }
   }
 
-  /// Chọn giọng đọc tiếng Việt. Ưu tiên đặt ngôn ngữ vi-VN; nếu thiết bị có
-  /// liệt kê giọng, tìm đúng giọng locale "vi" để đảm bảo đọc được tiếng Việt.
-  Future<void> _selectVietnameseVoice() async {
+  /// Select English voice. Prefer en-US.
+  Future<void> _selectEnglishVoice() async {
     try {
-      await _tts.setLanguage('vi-VN');
+      await _tts.setLanguage('en-US');
     } catch (e) {
-      debugPrint('setLanguage(vi-VN) failed: $e');
+      debugPrint('setLanguage(en-US) failed: $e');
     }
 
     try {
       final voices = await _tts.getVoices;
       if (voices is! List) return;
 
-      Map? viVoice;
+      Map? enVoice;
       for (final raw in voices) {
         if (raw is! Map) continue;
         final locale = '${raw['locale'] ?? ''}'.toLowerCase();
-        if (locale.startsWith('vi')) {
-          viVoice = raw;
+        if (locale.startsWith('en')) {
+          enVoice = raw;
           break;
         }
       }
 
-      if (viVoice != null) {
+      if (enVoice != null) {
         await _tts.setVoice({
-          'name': '${viVoice['name']}',
-          'locale': '${viVoice['locale']}',
+          'name': '${enVoice['name']}',
+          'locale': '${enVoice['locale']}',
         });
-        debugPrint('Đã chọn giọng tiếng Việt: ${viVoice['name']}');
+        debugPrint('Selected English voice: ${enVoice['name']}');
       } else {
-        debugPrint('Không tìm thấy giọng tiếng Việt trên thiết bị này.');
+        debugPrint('English voice not found on this device.');
       }
     } catch (e) {
       debugPrint('Voice selection failed: $e');
     }
   }
+
+  // Số lần nhắc lại TTS (3 lần giúp người cao tuổi không bỏ lỡ)
+  static const int _ttsRepeatCount = 3;
+  // Khoảng dừng giữa các lần nhắc (1.5 giây)
+  static const Duration _ttsRepeatGap = Duration(milliseconds: 1500);
 
   Future<void> _handleAlert(KioskAlert alert) async {
     if (_speaking.contains(alert.id)) return;
@@ -104,14 +108,29 @@ class _KioskHomePageState extends State<KioskHomePage> {
 
     if (mounted) setState(() => _activeAlert = alert);
 
-    try {
-      await _tts.stop();
-      await _tts.speak(alert.message);
-    } catch (e) {
-      debugPrint('TTS speak failed: $e');
+    // Lặp lại TTS _ttsRepeatCount lần — người dùng có thể bấm "Đã hiểu"
+    // bất kỳ lúc nào để dừng sớm (kiểm tra _speaking sau mỗi lần).
+    for (int round = 1; round <= _ttsRepeatCount; round++) {
+      // Nếu người dùng đã bấm "Đã hiểu", dừng phát sớm
+      if (!_speaking.contains(alert.id)) break;
+
+      try {
+        await _tts.stop();
+        await _tts.speak(alert.message);
+        debugPrint('TTS lần $round/$_ttsRepeatCount: ${alert.message}');
+      } catch (e) {
+        debugPrint('TTS speak failed (round $round): $e');
+        break;
+      }
+
+      // Dừng giữa các lần nhắc (trừ lần cuối)
+      if (round < _ttsRepeatCount && _speaking.contains(alert.id)) {
+        await Future.delayed(_ttsRepeatGap);
+      }
     }
 
-    if (_activeAlert?.id == alert.id) {
+    // Sau khi phát xong tất cả các lần, tự động xác nhận nếu chưa bị dismiss
+    if (_activeAlert?.id == alert.id && _speaking.contains(alert.id)) {
       await _dismissAlert(alert);
     }
   }
@@ -184,7 +203,7 @@ class _KioskHomePageState extends State<KioskHomePage> {
             child: const Text(
               'Remember.For.Me',
               style: TextStyle(
-                color: AppColors.brand,
+                color: AppColors.brand, // indigo
                 fontSize: 26,
                 fontWeight: FontWeight.w900,
               ),
@@ -194,29 +213,31 @@ class _KioskHomePageState extends State<KioskHomePage> {
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
             decoration: BoxDecoration(
               color: inHome
-                  ? const Color(0xFF97F3A8)
-                  : const Color(0xFFFFE0A6),
+                  ? AppColors.reassuranceBg
+                  : const Color(0xFFFEF3C7),
               borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: inHome
+                    ? AppColors.reassuranceBorder
+                    : const Color(0xFFFCD34D),
+              ),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  inHome ? Icons.home_rounded : Icons.directions_walk_rounded,
-                  size: 18,
-                  color: inHome
-                      ? const Color(0xFF106228)
-                      : const Color(0xFF8A5A00),
+                Text(
+                  inHome ? '🏠' : '🚶',
+                  style: const TextStyle(fontSize: 16),
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  inHome ? 'Trong nhà' : 'Ra ngoài',
+                  inHome ? 'At Home' : 'Away',
                   style: TextStyle(
                     color: inHome
-                        ? const Color(0xFF106228)
-                        : const Color(0xFF8A5A00),
+                        ? AppColors.reassuranceTitle
+                        : AppColors.morningText,
                     fontSize: 16,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ],
@@ -229,9 +250,9 @@ class _KioskHomePageState extends State<KioskHomePage> {
 
   Widget _buildBottomNav() {
     const items = [
-      (Icons.home_rounded, 'Trang chủ'),
-      (Icons.notifications_rounded, 'Lời nhắc'),
-      (Icons.favorite_rounded, 'Sức khỏe'),
+      ('🏠', 'Home'),
+      ('🔔', 'Schedule'),
+      ('❤️', 'Health'),
     ];
     return Container(
       decoration: const BoxDecoration(
@@ -253,7 +274,7 @@ class _KioskHomePageState extends State<KioskHomePage> {
               for (var i = 0; i < items.length; i++)
                 Expanded(
                   child: _NavButton(
-                    icon: items[i].$1,
+                    emoji: items[i].$1,
                     label: items[i].$2,
                     active: _tabIndex == i,
                     onTap: () => setState(() => _tabIndex = i),
@@ -278,13 +299,13 @@ class _KioskHomePageState extends State<KioskHomePage> {
 
 class _NavButton extends StatelessWidget {
   const _NavButton({
-    required this.icon,
+    required this.emoji,
     required this.label,
     required this.active,
     required this.onTap,
   });
 
-  final IconData icon;
+  final String emoji;
   final String label;
   final bool active;
   final VoidCallback onTap;
@@ -305,17 +326,16 @@ class _NavButton extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              size: 30,
-              color: active ? AppColors.brand : AppColors.inkSoft,
+            Text(
+              emoji,
+              style: const TextStyle(fontSize: 26),
             ),
             const SizedBox(height: 4),
             Text(
               label,
               style: TextStyle(
                 color: active ? AppColors.brand : AppColors.inkSoft,
-                fontSize: 15,
+                fontSize: 14,
                 fontWeight: active ? FontWeight.w800 : FontWeight.w600,
               ),
             ),

@@ -15,7 +15,7 @@ class DebugPanel extends StatelessWidget {
     return Scaffold(
       backgroundColor: AppColors.shell,
       appBar: AppBar(
-        title: const Text('Bảng thử nghiệm (Debug)'),
+        title: const Text('Simulation & Debug Panel'),
         backgroundColor: Colors.white,
         foregroundColor: AppColors.ink,
         elevation: 0,
@@ -30,22 +30,22 @@ class DebugPanel extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _InfoTile(
-                    label: 'Trạng thái Ngoại',
+                    label: 'Elder Status',
                     value: _statusVi(sync.elderStatus),
                   ),
                   const SizedBox(height: 12),
                   _InfoTile(
-                    label: 'Nhịp tim (mô phỏng)',
+                    label: 'Simulated Heart Rate',
                     value: sync.heartRateBpm != null
-                        ? '${sync.heartRateBpm} nhịp/phút'
-                        : 'Chưa có',
+                        ? '${sync.heartRateBpm} BPM'
+                        : 'No data',
                   ),
                   const SizedBox(height: 12),
                   _InfoTile(
-                    label: 'BLE',
+                    label: 'BLE Proximity Tracker',
                     value: sync.bleEnabled
-                        ? 'Đang quét tag ${sync.tagId}'
-                        : 'Đang tắt',
+                        ? 'Scanning tag: ${sync.tagId}'
+                        : 'Disabled',
                   ),
                   const SizedBox(height: 28),
                   FilledButton(
@@ -54,7 +54,7 @@ class DebugPanel extends StatelessWidget {
                       backgroundColor: AppColors.action,
                       padding: const EdgeInsets.symmetric(vertical: 20),
                     ),
-                    child: const Text('Mô phỏng: Trong nhà',
+                    child: const Text('Simulate: At Home',
                         style: TextStyle(fontSize: 20)),
                   ),
                   const SizedBox(height: 12),
@@ -63,7 +63,7 @@ class DebugPanel extends StatelessWidget {
                     style: FilledButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 20),
                     ),
-                    child: const Text('Mô phỏng: Ra ngoài',
+                    child: const Text('Simulate: Away (Wandering)',
                         style: TextStyle(fontSize: 20)),
                   ),
                 ],
@@ -77,9 +77,9 @@ class DebugPanel extends StatelessWidget {
 
   String _statusVi(String status) {
     return switch (status) {
-      'in_home' => 'Trong nhà',
-      'out_of_home' => 'Ra ngoài',
-      _ => 'Chưa rõ',
+      'in_home' => 'At Home',
+      'out_of_home' => 'Away',
+      _ => 'Unknown',
     };
   }
 }

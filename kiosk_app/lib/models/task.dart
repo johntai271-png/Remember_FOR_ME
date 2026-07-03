@@ -7,24 +7,26 @@ enum DayPart { morning, noon, evening }
 
 extension DayPartInfo on DayPart {
   String get labelVi => switch (this) {
-        DayPart.morning => 'Buổi sáng',
-        DayPart.noon => 'Buổi trưa',
-        DayPart.evening => 'Buổi tối',
+        DayPart.morning => 'Morning Routine',
+        DayPart.noon => 'Afternoon Routine',
+        DayPart.evening => 'Evening Routine',
       };
 
-  IconData get icon => switch (this) {
-        DayPart.morning => Icons.wb_sunny_rounded,
-        DayPart.noon => Icons.light_mode_rounded,
-        DayPart.evening => Icons.nightlight_round,
+  /// Emoji icon — hiển thị giống Kiosk của Hân (🌅 / ☀️ / 🌙)
+  String get icon => switch (this) {
+        DayPart.morning => '🌅',
+        DayPart.noon => '☀️',
+        DayPart.evening => '🌙',
       };
 
+  /// Màu văn bản đặc trưng của từng buổi (theo bảng màu Hân)
   Color get color => switch (this) {
-        DayPart.morning => AppColors.warning,
-        DayPart.noon => AppColors.brand,
-        DayPart.evening => AppColors.active,
+        DayPart.morning => AppColors.morningText,
+        DayPart.noon => AppColors.noonText,
+        DayPart.evening => AppColors.eveningText,
       };
 
-  /// Buổi tương ứng với một thời điểm (dùng để biết "đang là buổi nào").
+  /// Buổi tương ứng với một thời điểm (đùng để biết "đang là buổi nào").
   static DayPart fromMinutes(int minutes) {
     if (minutes < 11 * 60) return DayPart.morning; // < 11:00
     if (minutes < 16 * 60) return DayPart.noon; // 11:00–16:00
@@ -71,7 +73,7 @@ class KioskTask {
 
   static KioskTask fromMap(String id, Object? value) {
     final data = value is Map ? value : const {};
-    final name = '${data['name'] ?? 'Lời nhắc'}';
+    final name = '${data['name'] ?? 'Reminder'}';
     final rawText = '${data['text'] ?? ''}'.trim();
     final time = '${data['scheduled_time'] ?? '--:--'}';
     return KioskTask(
@@ -122,7 +124,7 @@ class KioskTask {
 
 /// Nhãn trạng thái tiếng Việt cho thẻ nhắc nhở.
 String taskStatusLabelVi(KioskTask task) {
-  if (task.isTriggered) return 'Đang nhắc';
-  if (task.isCompleted) return 'Đã xong';
-  return 'Sắp tới';
+  if (task.isTriggered) return 'Active';
+  if (task.isCompleted) return 'Completed';
+  return 'Upcoming';
 }

@@ -17,6 +17,8 @@ dependencies:
   shared_preferences: any
   permission_handler: any
   flutter_blue_plus: any
+  google_fonts: any
+  cupertino_icons: any
 
 dev_dependencies:
   flutter_test:

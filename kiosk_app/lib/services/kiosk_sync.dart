@@ -10,7 +10,7 @@ import '../models/task.dart';
 const familyId = 'family_001';
 const familyPath = 'families/$familyId';
 const defaultEmergencyMessage =
-    'Ngoại ơi, con đang gọi. Xin hãy nhìn vào màn hình.';
+    'Emergency call incoming. Please look at the screen.';
 
 /// Một thông báo cần phát loa + hiển thị overlay.
 class KioskAlert {
@@ -42,6 +42,7 @@ class KioskSyncService extends ChangeNotifier {
   final Random _random = Random();
 
   StreamSubscription<DatabaseEvent>? _tasksSub;
+  StreamSubscription<DatabaseEvent>? _remindersSub; // tương thích node reminders/ cũ
   StreamSubscription<DatabaseEvent>? _emergencySub;
   StreamSubscription<DatabaseEvent>? _elderSub;
   StreamSubscription<DatabaseEvent>? _bleConfigSub;
@@ -51,6 +52,10 @@ class KioskSyncService extends ChangeNotifier {
   Timer? _scheduleTimer;
   Timer? _bleScanTimer;
   Timer? _bleMissingTimer;
+
+  /// Dedup set: id của alert đã được đưa vào hàng đợi trong chu kỳ hiện tại
+  /// (để tránh cùng lúc tasks/ và reminders/ đều kích hoạt 2 alert).
+  final Set<String> _recentlyQueued = {};
 
   List<KioskTask> _tasks = const [];
   String _elderStatus = 'unknown';
@@ -85,16 +90,60 @@ class KioskSyncService extends ChangeNotifier {
     _startScheduleWatcher();
   }
 
+  /// Đưa alert vào hàng đợi với dedup 30 giây — tránh tasks/ và reminders/
+  /// cùng kích hoạt 2 âm thanh cho 1 lời nhắc.
+  void _queueAlert(KioskAlert alert) {
+    final key = alert.id;
+    if (_recentlyQueued.contains(key)) return;
+    _recentlyQueued.add(key);
+    _alertController.add(alert);
+    // Xoá khỏi dedup sau 30 giây để cho phép nhắc lại vào lần sau
+    Future.delayed(const Duration(seconds: 30), () => _recentlyQueued.remove(key));
+  }
+
   void _listenToFirebase() {
+    // ── Listener chính: node tasks/ (caregiver mới dùng node này) ──────────
     _tasksSub = _familyRef.child('tasks').onValue.listen((event) {
       final tasks = KioskTask.parseList(event.snapshot.value);
       _tasks = tasks;
       notifyListeners();
       for (final task in tasks.where((t) => t.isTriggered)) {
-        _alertController.add(KioskAlert(
+        _queueAlert(KioskAlert(
           id: task.id,
           title: task.name,
           message: task.speakText,
+          isEmergency: false,
+        ));
+      }
+    });
+
+    // ── Listener bổ sung: node reminders/ (tương thích với bridge cũ) ──────
+    // Khi caregiver chưa update App.tsx hoặc ghi qua node reminders/ cũ,
+    // kiosk vẫn bắt được tín hiệu và phát loa bình thường.
+    _remindersSub = _familyRef.child('reminders').onValue.listen((event) {
+      final data = event.snapshot.value is Map
+          ? event.snapshot.value as Map
+          : const <String, dynamic>{};
+
+      const slots = {
+        'morning': 'Nhắc buổi sáng',
+        'noon': 'Nhắc buổi trưa',
+        'evening': 'Nhắc buổi tối',
+      };
+
+      for (final entry in slots.entries) {
+        final key = entry.key;
+        final title = entry.value;
+        final slot = data[key];
+        if (slot is! Map) continue;
+        final isTriggered = _asBoolStatic(slot['is_triggered']);
+        if (!isTriggered) continue;
+        final text = '${slot['text'] ?? title}';
+        // Dùng id 'reminder_{key}' để dedup không đụng với tasks/{taskId}
+        _queueAlert(KioskAlert(
+          id: 'reminder_$key',
+          title: title,
+          message: text,
           isEmergency: false,
         ));
       }
@@ -144,12 +193,30 @@ class KioskSyncService extends ChangeNotifier {
       });
       return;
     }
+
+    // Xử lý id từ reminders/ node cũ (dạng 'reminder_morning')
+    if (taskId.startsWith('reminder_')) {
+      final key = taskId.replaceFirst('reminder_', '');
+      await _familyRef.child('reminders/$key').update({
+        'is_triggered': false,
+        'triggeredAt': null,
+      });
+      return;
+    }
+
+    // Node tasks/ mới (id thông thường)
     await _familyRef.child('tasks/$taskId').update({
       'is_triggered': false,
       'spokenAt': ServerValue.timestamp,
       'status': 'Completed',
       'completedAt': ServerValue.timestamp,
     });
+  }
+
+  /// Helper tĩnh parse bool (dùng trong listener reminders/ không có context KioskTask)
+  static bool _asBoolStatic(Object? value) {
+    if (value is bool) return value;
+    return '$value'.trim().toLowerCase() == 'true';
   }
 
   Future<void> forceVolumeFlag() async {
@@ -297,8 +364,8 @@ class KioskSyncService extends ChangeNotifier {
       'is_active': outOfHome,
       'type': outOfHome ? 'out_of_safe_zone' : null,
       'message': outOfHome
-          ? 'Ngoại đã ra khỏi khu vực an toàn.'
-          : 'Ngoại đang ở trong nhà.',
+          ? 'Elder has left the safe zone.'
+          : 'Elder is safe inside the home zone.',
       'severity': outOfHome ? 'warning' : 'normal',
       'safeZoneStatus': outOfHome ? 'outside' : 'inside',
       'source': 'BLE tracker',
@@ -319,6 +386,7 @@ class KioskSyncService extends ChangeNotifier {
   @override
   void dispose() {
     _tasksSub?.cancel();
+    _remindersSub?.cancel();
     _emergencySub?.cancel();
     _elderSub?.cancel();
     _bleConfigSub?.cancel();

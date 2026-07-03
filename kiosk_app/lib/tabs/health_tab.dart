@@ -4,7 +4,7 @@ import '../services/kiosk_sync.dart';
 import '../theme/app_colors.dart';
 import '../widgets/reminder_card.dart';
 
-/// Tab Sức khỏe: nhịp tim mô phỏng, vị trí (in_home/out_of_home), kết nối.
+/// Tab Sức khỏe — dùng màu sắc mới của bảng màu Hân.
 class HealthTab extends StatelessWidget {
   const HealthTab({super.key, required this.sync});
 
@@ -19,44 +19,55 @@ class HealthTab extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
       children: [
         const Text(
-          'Sức khỏe của Ngoại',
+          'Your Health Today',
           style: TextStyle(
             color: AppColors.ink,
-            fontSize: 30,
-            fontWeight: FontWeight.w900,
+            fontSize: 28,
+            fontWeight: FontWeight.w800,
           ),
         ),
         const SizedBox(height: 20),
         _MetricCard(
-          icon: Icons.favorite_rounded,
-          iconColor: AppColors.danger,
-          label: 'Nhịp tim',
+          emoji: '❤️',
+          emojiColor: AppColors.danger,
+          label: 'Heart Rate',
           value: hr != null ? '$hr' : '--',
-          unit: hr != null ? 'nhịp/phút' : 'chưa có dữ liệu',
-          note: sync.vitalsStatus == 'Normal'
-              ? 'Bình thường'
+          unit: hr != null ? 'BPM' : 'no data',
+          badgeLabel: sync.vitalsStatus == 'Normal'
+              ? 'Normal'
               : sync.vitalsStatus == 'Elevated'
-                  ? 'Hơi cao'
+                  ? 'Elevated'
                   : sync.vitalsStatus,
+          badgeBg: sync.vitalsStatus == 'Elevated'
+              ? const Color(0xFFFEF3C7)
+              : const Color(0xFFD1FAE5),
+          badgeFg: sync.vitalsStatus == 'Elevated'
+              ? AppColors.morningText
+              : AppColors.action,
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 14),
         _MetricCard(
-          icon: inHome ? Icons.home_rounded : Icons.directions_walk_rounded,
-          iconColor: inHome ? AppColors.action : AppColors.warning,
-          label: 'Vị trí',
-          value: inHome ? 'Trong nhà' : 'Ra ngoài',
-          unit: inHome ? 'khu vực an toàn' : 'ngoài khu vực an toàn',
-          note: inHome ? 'An toàn' : 'Cần chú ý',
-          noteColor: inHome ? AppColors.action : AppColors.danger,
+          emoji: inHome ? '🏠' : '🚶',
+          emojiColor: inHome ? AppColors.action : AppColors.warning,
+          label: 'Location',
+          value: inHome ? 'In Home' : 'Outside',
+          unit: inHome ? 'safe zone' : 'outside safe zone',
+          badgeLabel: inHome ? 'Safe' : 'Attention',
+          badgeBg: inHome
+              ? const Color(0xFFD1FAE5)
+              : const Color(0xFFFEE2E2),
+          badgeFg: inHome ? AppColors.action : AppColors.danger,
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 14),
         _MetricCard(
-          icon: Icons.wifi_rounded,
-          iconColor: AppColors.brand,
-          label: 'Kết nối',
-          value: 'Đang hoạt động',
-          unit: sync.bleEnabled ? 'cảm biến đang bật' : 'cảm biến đang tắt',
-          note: 'Đã kết nối',
+          emoji: '📶',
+          emojiColor: AppColors.brand,
+          label: 'Connection',
+          value: 'Active',
+          unit: sync.bleEnabled ? 'sensor enabled' : 'sensor disabled',
+          badgeLabel: 'Connected',
+          badgeBg: const Color(0xFFDBEAFE),
+          badgeFg: AppColors.noonText,
         ),
       ],
     );
@@ -65,22 +76,24 @@ class HealthTab extends StatelessWidget {
 
 class _MetricCard extends StatelessWidget {
   const _MetricCard({
-    required this.icon,
-    required this.iconColor,
+    required this.emoji,
+    required this.emojiColor,
     required this.label,
     required this.value,
     required this.unit,
-    required this.note,
-    this.noteColor = AppColors.action,
+    required this.badgeLabel,
+    required this.badgeBg,
+    required this.badgeFg,
   });
 
-  final IconData icon;
-  final Color iconColor;
+  final String emoji;
+  final Color emojiColor;
   final String label;
   final String value;
   final String unit;
-  final String note;
-  final Color noteColor;
+  final String badgeLabel;
+  final Color badgeBg;
+  final Color badgeFg;
 
   @override
   Widget build(BuildContext context) {
@@ -88,14 +101,17 @@ class _MetricCard extends StatelessWidget {
       padding: const EdgeInsets.all(22),
       child: Row(
         children: [
+          // Icon vòng tròn
           Container(
-            width: 72,
-            height: 72,
+            width: 68,
+            height: 68,
             decoration: BoxDecoration(
-              color: iconColor.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(20),
+              color: emojiColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(18),
             ),
-            child: Icon(icon, color: iconColor, size: 38),
+            child: Center(
+              child: Text(emoji, style: const TextStyle(fontSize: 32)),
+            ),
           ),
           const SizedBox(width: 18),
           Expanded(
@@ -106,8 +122,8 @@ class _MetricCard extends StatelessWidget {
                   label,
                   style: const TextStyle(
                     color: AppColors.inkSoft,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -119,8 +135,8 @@ class _MetricCard extends StatelessWidget {
                       value,
                       style: const TextStyle(
                         color: AppColors.ink,
-                        fontSize: 34,
-                        fontWeight: FontWeight.w900,
+                        fontSize: 32,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -129,8 +145,8 @@ class _MetricCard extends StatelessWidget {
                         unit,
                         style: const TextStyle(
                           color: AppColors.inkSoft,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                     ),
@@ -139,18 +155,20 @@ class _MetricCard extends StatelessWidget {
               ],
             ),
           ),
+          // Badge trạng thái
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
-              color: noteColor.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(999),
+              color: badgeBg,
+              borderRadius: BorderRadius.circular(9999),
             ),
             child: Text(
-              note,
+              badgeLabel,
               style: TextStyle(
-                color: noteColor,
-                fontSize: 16,
-                fontWeight: FontWeight.w800,
+                color: badgeFg,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
               ),
             ),
           ),

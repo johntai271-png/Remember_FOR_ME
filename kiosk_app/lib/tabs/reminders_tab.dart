@@ -5,8 +5,8 @@ import '../services/kiosk_sync.dart';
 import '../theme/app_colors.dart';
 import '../widgets/reminder_card.dart';
 
-/// Tab Lời nhắc: toàn bộ lời nhắc gom theo buổi Sáng / Trưa / Tối.
-/// Buổi tương ứng giờ hiện tại được làm nổi bật.
+/// Tab Lời nhắc — giao diện period blocks theo màu sắc của Hân.
+/// Buổi hiện tại được highlight viền indigo + scale nhẹ.
 class RemindersTab extends StatelessWidget {
   const RemindersTab({super.key, required this.sync, required this.now});
 
@@ -21,13 +21,20 @@ class RemindersTab extends StatelessWidget {
 
     if (tasks.isEmpty) {
       return const Center(
-        child: Text(
-          'Chưa có lời nhắc nào.',
-          style: TextStyle(
-            color: AppColors.inkSoft,
-            fontSize: 24,
-            fontWeight: FontWeight.w600,
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('📋', style: TextStyle(fontSize: 56)),
+            SizedBox(height: 16),
+            Text(
+              'No reminders scheduled.',
+              style: TextStyle(
+                color: AppColors.inkSoft,
+                fontSize: 24,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
         ),
       );
     }
@@ -35,8 +42,17 @@ class RemindersTab extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
       children: [
+        const Text(
+          "Today's Schedule",
+          style: TextStyle(
+            fontSize: 28,
+            fontWeight: FontWeight.w800,
+            color: AppColors.ink,
+          ),
+        ),
+        const SizedBox(height: 20),
         for (final part in DayPart.values)
-          _DayPartSection(
+          _PeriodSection(
             part: part,
             tasks: tasks.where((t) => t.dayPart == part).toList(),
             highlighted: part == currentPart,
@@ -46,8 +62,11 @@ class RemindersTab extends StatelessWidget {
   }
 }
 
-class _DayPartSection extends StatelessWidget {
-  const _DayPartSection({
+// ────────────────────────────────────────────────────────────────────────────
+// Khối một buổi — màu sắc đặc trưng của Hân, viền indigo khi đang là buổi hiện tại
+// ────────────────────────────────────────────────────────────────────────────
+class _PeriodSection extends StatelessWidget {
+  const _PeriodSection({
     required this.part,
     required this.tasks,
     required this.highlighted,
@@ -59,71 +78,97 @@ class _DayPartSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final (bg, textColor) = switch (part) {
+      DayPart.morning => (AppColors.morningBg, AppColors.morningText),
+      DayPart.noon    => (AppColors.noonBg,    AppColors.noonText),
+      DayPart.evening => (AppColors.eveningBg, AppColors.eveningText),
+    };
+
     return Padding(
-      padding: const EdgeInsets.only(bottom: 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: part.color.withValues(alpha: 0.16),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(part.icon, color: part.color, size: 26),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                part.labelVi,
-                style: const TextStyle(
-                  color: AppColors.ink,
-                  fontSize: 26,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              if (highlighted) ...[
-                const SizedBox(width: 10),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: AppColors.brand,
-                    borderRadius: BorderRadius.circular(999),
+      padding: const EdgeInsets.only(bottom: 20),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: highlighted
+                ? AppColors.brand
+                : Colors.transparent,
+            width: 2,
+          ),
+          boxShadow: highlighted
+              ? [
+                  BoxShadow(
+                    color: AppColors.brand.withValues(alpha: 0.12),
+                    blurRadius: 30,
+                    spreadRadius: 4,
+                  )
+                ]
+              : const [AppColors.cardShadow],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header
+            Row(
+              children: [
+                Text(part.icon, style: const TextStyle(fontSize: 24)),
+                const SizedBox(width: 12),
+                Text(
+                  part.labelVi,
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: textColor,
                   ),
-                  child: const Text(
-                    'Bây giờ',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w800,
+                ),
+                if (highlighted) ...[
+                  const SizedBox(width: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.brand,
+                      borderRadius: BorderRadius.circular(9999),
+                    ),
+                    child: const Text(
+                      'Current Period',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
-                ),
+                ],
               ],
-            ],
-          ),
-          const SizedBox(height: 12),
-          if (tasks.isEmpty)
-            Padding(
-              padding: const EdgeInsets.only(left: 4, bottom: 4),
-              child: Text(
-                'Không có lời nhắc.',
-                style: TextStyle(
-                  color: AppColors.inkSoft.withValues(alpha: 0.7),
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            )
-          else
-            for (final task in tasks)
+            ),
+            Divider(
+              color: textColor.withValues(alpha: 0.2),
+              height: 20,
+            ),
+            if (tasks.isEmpty)
               Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: ReminderCard(task: task),
-              ),
-        ],
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Text(
+                  'No reminders.',
+                  style: TextStyle(
+                    color: textColor.withValues(alpha: 0.65),
+                    fontSize: 17,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              )
+            else
+              for (final task in tasks)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: ReminderCard(task: task),
+                ),
+          ],
+        ),
       ),
     );
   }
