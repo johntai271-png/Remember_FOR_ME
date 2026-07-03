@@ -156,38 +156,44 @@ class _KioskHomePageState extends State<KioskHomePage> {
   Widget build(BuildContext context) {
     final alert = _activeAlert;
     if (alert != null) {
-      return Scaffold(
-        body: AlertOverlay(
-          alert: alert,
-          onDismiss: () => _dismissAlert(alert),
+      return PopScope(
+        canPop: false, // Chặn nút back vật lý khi đang phát cảnh báo
+        child: Scaffold(
+          body: AlertOverlay(
+            alert: alert,
+            onDismiss: () => _dismissAlert(alert),
+          ),
         ),
       );
     }
 
-    return Scaffold(
-      backgroundColor: AppColors.shell,
-      body: SafeArea(
-        bottom: false,
-        child: ListenableBuilder(
-          listenable: _sync,
-          builder: (context, _) => Column(
-            children: [
-              _buildTopBar(),
-              Expanded(
-                child: IndexedStack(
-                  index: _tabIndex,
-                  children: [
-                    HomeTab(sync: _sync, now: _now),
-                    RemindersTab(sync: _sync, now: _now),
-                    HealthTab(sync: _sync),
-                  ],
+    return PopScope(
+      canPop: false, // Chặn nút back vật lý ở màn hình chính
+      child: Scaffold(
+        backgroundColor: AppColors.shell,
+        body: SafeArea(
+          bottom: false,
+          child: ListenableBuilder(
+            listenable: _sync,
+            builder: (context, _) => Column(
+              children: [
+                _buildTopBar(),
+                Expanded(
+                  child: IndexedStack(
+                    index: _tabIndex,
+                    children: [
+                      HomeTab(sync: _sync, now: _now),
+                      RemindersTab(sync: _sync, now: _now),
+                      HealthTab(sync: _sync),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
+        bottomNavigationBar: _buildBottomNav(),
       ),
-      bottomNavigationBar: _buildBottomNav(),
     );
   }
 
