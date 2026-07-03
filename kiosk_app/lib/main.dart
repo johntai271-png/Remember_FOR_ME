@@ -4,10 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'firebase_options.dart';
 import 'screens/kiosk_home.dart';
+import 'screens/pairing_screen.dart';
 import 'theme/app_colors.dart';
 
 void main() async {
@@ -40,7 +42,16 @@ void main() async {
 
   await _requestPermissions();
 
-  runApp(const RememberForMeKiosk());
+  // Đọc family_id đã lưu từ trước (nếu có)
+  String? familyId;
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    familyId = prefs.getString('family_id');
+  } catch (e) {
+    debugPrint('SharedPreferences read failed: $e');
+  }
+
+  runApp(RememberForMeKiosk(initialFamilyId: familyId));
 }
 
 Future<void> _requestPermissions() async {
@@ -57,7 +68,9 @@ Future<void> _requestPermissions() async {
 }
 
 class RememberForMeKiosk extends StatelessWidget {
-  const RememberForMeKiosk({super.key});
+  const RememberForMeKiosk({super.key, this.initialFamilyId});
+
+  final String? initialFamilyId;
 
   @override
   Widget build(BuildContext context) {
@@ -70,13 +83,21 @@ class RememberForMeKiosk extends StatelessWidget {
           brightness: Brightness.light,
         ),
         scaffoldBackgroundColor: AppColors.shell,
-        // Dùng Inter từ Google Fonts — đồng bộ với giao diện web Caregiver
         textTheme: GoogleFonts.interTextTheme(
           ThemeData.light().textTheme,
         ),
         useMaterial3: true,
       ),
-      home: const KioskHomePage(),
+      // Nếu đã liên kết gia đình thì vào thẳng Home, ngược lại hiển thị màn hình ghép nối PIN
+      initialRoute: initialFamilyId != null ? '/home' : '/pairing',
+      routes: {
+        '/pairing': (context) => const PairingScreen(),
+        '/home': (context) {
+          final args = ModalRoute.of(context)!.settings.arguments as String?;
+          final familyId = args ?? initialFamilyId ?? 'family_001';
+          return KioskHomePage(familyId: familyId);
+        },
+      },
     );
   }
 }

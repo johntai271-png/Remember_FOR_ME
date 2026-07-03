@@ -7,8 +7,6 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 import '../models/task.dart';
 
-const familyId = 'family_001';
-const familyPath = 'families/$familyId';
 const defaultEmergencyMessage =
     'Emergency call incoming. Please look at the screen.';
 
@@ -36,8 +34,10 @@ bool _isDesktopOrWeb() =>
 /// - Cập nhật `tracker_alert` theo trạng thái elder.
 /// - Quét BLE tag để suy ra in_home / out_of_home (chỉ trên thiết bị thật).
 class KioskSyncService extends ChangeNotifier {
-  KioskSyncService() : _familyRef = FirebaseDatabase.instance.ref(familyPath);
+  KioskSyncService({required this.familyId})
+      : _familyRef = FirebaseDatabase.instance.ref('families/$familyId');
 
+  final String familyId;
   final DatabaseReference _familyRef;
   final Random _random = Random();
 

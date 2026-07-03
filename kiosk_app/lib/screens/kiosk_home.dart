@@ -13,14 +13,16 @@ import 'alert_overlay.dart';
 import 'debug_panel.dart';
 
 class KioskHomePage extends StatefulWidget {
-  const KioskHomePage({super.key});
+  const KioskHomePage({super.key, required this.familyId});
+
+  final String familyId;
 
   @override
   State<KioskHomePage> createState() => _KioskHomePageState();
 }
 
 class _KioskHomePageState extends State<KioskHomePage> {
-  final KioskSyncService _sync = KioskSyncService();
+  late final KioskSyncService _sync;
   final FlutterTts _tts = FlutterTts();
 
   StreamSubscription<KioskAlert>? _alertSub;
@@ -34,6 +36,7 @@ class _KioskHomePageState extends State<KioskHomePage> {
   @override
   void initState() {
     super.initState();
+    _sync = KioskSyncService(familyId: widget.familyId);
     _configureTts();
     _sync.start();
     _alertSub = _sync.alerts.listen(_handleAlert);
