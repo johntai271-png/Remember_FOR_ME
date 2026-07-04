@@ -37,16 +37,19 @@ import {
   updateFamilyPath,
   updateUserProfile,
 } from "./firebase";
-import { HomeScreen } from "./screens/HomeScreen";
+import { HomeScreen, ManagementScreen } from "./screens/HomeScreen";
 import type {
   AppTab,
+  AlertFeedItem,
+  BleTag,
   CaregiverProfile,
   DemoSettingsState,
   Routine,
+  RoutinePeriod,
   SettingsPage,
   ToastState,
 } from "./types";
-import { createAvatarSvg, formatClock } from "./utils";
+import { createAvatarSvg, formatClock, formatRelativeTime } from "./utils";
 
 const caregiverAvatar = createAvatarSvg("#1d5bd8", "#f0d1c3", "#5ca2ff");
 
@@ -68,6 +71,36 @@ const defaultProfile = {
   role: "Family caregiver",
   email: "hy@example.com",
 };
+
+const defaultBleTags: BleTag[] = [
+  {
+    id: "wallet",
+    name: "Leather Wallet Tag",
+    location: "Hallway Key Box",
+    hardwareId: "BLE-WALLET-001",
+    status: "safe",
+    connectionStatus: "connected",
+    lastConnectedAt: Date.now() - 5 * 60 * 1000,
+  },
+  {
+    id: "keys",
+    name: "Front Door Keys Tag",
+    location: "Kitchen Hook",
+    hardwareId: "BLE-KEYS-002",
+    status: "safe",
+    connectionStatus: "connected",
+    lastConnectedAt: Date.now() - 9 * 60 * 1000,
+  },
+  {
+    id: "pillbox",
+    name: "Pillbox Smart Tag",
+    location: "Dining Table Drawer",
+    hardwareId: "BLE-PILL-003",
+    status: "safe",
+    connectionStatus: "disconnected",
+    lastConnectedAt: null,
+  },
+];
 
 function mergeSettings(
   remoteSettings?: Partial<DemoSettingsState> | null,
@@ -127,6 +160,8 @@ export default function App() {
   const [profileName, setProfileName] = useState(defaultProfile.name);
   const [profileRole, setProfileRole] = useState(defaultProfile.role);
   const [profileEmail, setProfileEmail] = useState(defaultProfile.email);
+  const [bleTags, setBleTags] = useState<BleTag[]>(defaultBleTags);
+  const [feedItems, setFeedItems] = useState<AlertFeedItem[]>(() => buildInitialFeed());
 
   const lastPersistedSettingsRef = useRef(JSON.stringify(initialDemoSettings));
 
@@ -204,6 +239,31 @@ export default function App() {
       if (value) setTrackerAlert(value);
     });
 
+    const unsubBleTags = subscribeToFamilyPath(familyId, "ble_tags", (snapshot) => {
+      const data = snapshot.val();
+      if (!data) {
+        setBleTags(defaultBleTags);
+        return;
+      }
+
+      const list = Object.entries(data).map(([id, value]: [string, any]) => ({
+        id,
+        name: value.name || "Untitled tag",
+        location: value.location || "No location set",
+        hardwareId: value.hardwareId || "",
+        status: value.status === "away" ? "away" : "safe",
+        connectionStatus:
+          value.connectionStatus === "connected" ||
+          value.connectionStatus === "pairing" ||
+          value.connectionStatus === "disconnected"
+            ? value.connectionStatus
+            : "disconnected",
+        lastConnectedAt: value.lastConnectedAt || null,
+      })) as BleTag[];
+
+      setBleTags(list);
+    });
+
     const unsubTasks = subscribeToFamilyPath(familyId, "tasks", (snapshot) => {
       const data = snapshot.val() || {};
       const list = Object.entries(data).map(([id, value]: [string, any]) => ({
@@ -211,6 +271,8 @@ export default function App() {
         name: value.name || "Untitled task",
         time: value.scheduled_time || "09:00",
         autoRun: !!value.is_auto,
+        period: normalizeRoutinePeriod(value.period, value.scheduled_time),
+        voiceEnabled: !!(value.voiceEnabled ?? value.voice ?? false),
         status: value.status || "Pending",
         note: buildTaskNote(value),
         updatedAt:
@@ -236,6 +298,7 @@ export default function App() {
       unsubElder();
       unsubKiosk();
       unsubTracker();
+      unsubBleTags();
       unsubTasks();
     };
   }, [familyId]);
@@ -269,6 +332,30 @@ export default function App() {
       .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
   }, [routines]);
 
+  const completedRoutines = useMemo(
+    () => historyItems.filter((routine) => routine.status === "Completed").slice(0, 4),
+    [historyItems],
+  );
+
+  const upcomingRoutine = useMemo(() => {
+    const pending = routines.filter((routine) => routine.status !== "Completed");
+    if (pending.length === 0) return null;
+
+    const sorted = [...pending].sort((a, b) => a.time.localeCompare(b.time));
+    const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+    const nextToday = sorted.find((routine) => {
+      const [hourText = "0", minuteText = "0"] = routine.time.split(":");
+      const minutes = Number(hourText) * 60 + Number(minuteText);
+      return minutes >= nowMinutes;
+    });
+
+    return nextToday || sorted[0] || null;
+  }, [routines]);
+
+  useEffect(() => {
+    setFeedItems((current) => buildAlertFeed({ elder, kiosk, trackerAlert, routines, bleTags }, current));
+  }, [bleTags, elder, kiosk, routines, trackerAlert]);
+
   const linkedFamilyMembers = caregiverProfile?.linkedFamilyMembers || [
     "Hy Nguyen",
     "Minh Nguyen",
@@ -280,6 +367,17 @@ export default function App() {
       id: Date.now(),
       message,
     });
+  }
+
+  function pushFeedItem(item: Omit<AlertFeedItem, "id" | "timestampLabel">) {
+    setFeedItems((current) => [
+      {
+        ...item,
+        id: `feed_${Date.now()}`,
+        timestampLabel: "Just now",
+      },
+      ...current,
+    ]);
   }
 
   async function handleTrigger(id: string) {
@@ -309,6 +407,11 @@ export default function App() {
       }
 
       pushToast(`Sent "${routine.name}" to the kiosk.`);
+      pushFeedItem({
+        level: "info",
+        title: "Reminder sent to kiosk",
+        message: `${routine.name} was pushed for ${formatClock(routine.time)}.`,
+      });
     } catch (error) {
       console.error(error);
       pushToast(`Failed to trigger ${routine.name}.`);
@@ -342,6 +445,8 @@ export default function App() {
         text: routine.name.trim(),
         scheduled_time: routine.time,
         is_auto: routine.autoRun,
+        period: routine.period,
+        voiceEnabled: routine.voiceEnabled,
         updatedAt: Date.now(),
       });
 
@@ -369,6 +474,8 @@ export default function App() {
         name: `New routine ${routines.length + 1}`,
         scheduled_time: "09:00",
         is_auto: false,
+        period: "morning",
+        voiceEnabled: true,
         status: "Pending",
         text: "",
         is_triggered: false,
@@ -380,6 +487,11 @@ export default function App() {
         triggerMode: null,
       });
       pushToast("New routine added.");
+      pushFeedItem({
+        level: "success",
+        title: "Routine created",
+        message: `New routine ${routines.length + 1} was added to the caregiver plan.`,
+      });
     } catch (error) {
       console.error(error);
       pushToast("Failed to add routine.");
@@ -396,6 +508,11 @@ export default function App() {
         message: "Ngoại ơi, con đang gọi. Xin hãy nhìn vào màn hình.",
       });
       pushToast("Emergency services contacted.");
+      pushFeedItem({
+        level: "danger",
+        title: "Emergency workflow started",
+        message: "The caregiver requested immediate assistance from the home workflow.",
+      });
     } catch (error) {
       console.error(error);
       pushToast("Failed to contact emergency services.");
@@ -406,6 +523,193 @@ export default function App() {
     setActiveTab(tab);
     if (tab === "settings") {
       setSettingsPage("root");
+    }
+  }
+
+  async function handleToggleTag(id: string) {
+    const target = bleTags.find((item) => item.id === id);
+    if (!target) return;
+
+    const nextStatus = target.status === "safe" ? "away" : "safe";
+    setBleTags((current) =>
+      current.map((tag) =>
+        tag.id === id
+          ? {
+              ...tag,
+              status: nextStatus,
+            }
+          : tag,
+      ),
+    );
+
+    try {
+      await updateFamilyPath(familyId, `ble_tags/${id}`, {
+        status: nextStatus,
+        updatedAt: Date.now(),
+      });
+    } catch (error) {
+      console.error(error);
+      pushToast("Failed to update tag status.");
+    }
+
+    pushFeedItem({
+      level: target.status === "safe" ? "warning" : "success",
+      title: target.status === "safe" ? "Tag moved out of range" : "Tag returned to home zone",
+      message:
+        target.status === "safe"
+          ? `${target.name} is no longer near ${target.location}.`
+          : `${target.name} is back near ${target.location}.`,
+    });
+  }
+
+  async function handleAddTag(name: string, location: string, hardwareId: string) {
+    const trimmedName = name.trim();
+    const trimmedLocation = location.trim();
+    const trimmedHardwareId = hardwareId.trim();
+
+    if (!trimmedName || !trimmedLocation || !trimmedHardwareId) {
+      pushToast("Tag name, location, and device ID are required.");
+      return false;
+    }
+
+    const nextTag: BleTag = {
+      id: `tag_${Date.now()}`,
+      name: trimmedName,
+      location: trimmedLocation,
+      hardwareId: trimmedHardwareId,
+      status: "safe",
+      connectionStatus: "disconnected",
+      lastConnectedAt: null,
+    };
+
+    try {
+      await updateFamilyPath(familyId, `ble_tags/${nextTag.id}`, {
+        name: nextTag.name,
+        location: nextTag.location,
+        hardwareId: nextTag.hardwareId,
+        status: nextTag.status,
+        connectionStatus: nextTag.connectionStatus,
+        lastConnectedAt: nextTag.lastConnectedAt,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      pushFeedItem({
+        level: "success",
+        title: "New BLE tag added",
+        message: `${trimmedName} was added for ${trimmedLocation}.`,
+      });
+      pushToast("Tag added.");
+      return true;
+    } catch (error) {
+      console.error(error);
+      pushToast("Failed to add tag.");
+      return false;
+    }
+  }
+
+  async function handleUpdateTag(
+    id: string,
+    patch: Partial<Pick<BleTag, "name" | "location" | "hardwareId">>,
+  ) {
+    const target = bleTags.find((item) => item.id === id);
+    if (!target) return;
+
+    const nextName = patch.name?.trim() ?? target.name;
+    const nextLocation = patch.location?.trim() ?? target.location;
+    const nextHardwareId = patch.hardwareId?.trim() ?? target.hardwareId;
+
+    if (!nextName || !nextLocation || !nextHardwareId) {
+      pushToast("Tag name, location, and device ID cannot be empty.");
+      return;
+    }
+
+    try {
+      await updateFamilyPath(familyId, `ble_tags/${id}`, {
+        name: nextName,
+        location: nextLocation,
+        hardwareId: nextHardwareId,
+        updatedAt: Date.now(),
+      });
+    } catch (error) {
+      console.error(error);
+      pushToast("Failed to update tag.");
+      return;
+    }
+
+    pushFeedItem({
+      level: "info",
+      title: "BLE tag updated",
+      message: `${nextName} is now assigned to ${nextLocation}.`,
+    });
+    pushToast("Tag updated.");
+  }
+
+  async function handleDeleteTag(id: string) {
+    const target = bleTags.find((item) => item.id === id);
+    if (!target) return;
+
+    try {
+      await updateFamilyPath(familyId, "ble_tags", {
+        [id]: null,
+      });
+    } catch (error) {
+      console.error(error);
+      pushToast("Failed to delete tag.");
+      return;
+    }
+
+    pushFeedItem({
+      level: "warning",
+      title: "BLE tag removed",
+      message: `${target.name} was removed from the caregiver dashboard.`,
+    });
+    pushToast("Tag deleted.");
+  }
+
+  async function handleConnectTag(id: string) {
+    const target = bleTags.find((item) => item.id === id);
+    if (!target) return;
+    if (!target.hardwareId.trim()) {
+      pushToast("Add a device ID before connecting this tag.");
+      return;
+    }
+
+    try {
+      await updateFamilyPath(familyId, `ble_tags/${id}`, {
+        connectionStatus: "connected",
+        lastConnectedAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      pushFeedItem({
+        level: "success",
+        title: "BLE tag connected",
+        message: `${target.name} is now paired with device ID ${target.hardwareId}.`,
+      });
+      pushToast("Tag marked as connected.");
+    } catch (error) {
+      console.error(error);
+      pushToast("Failed to connect tag.");
+    }
+  }
+
+  async function handleDisconnectTag(id: string) {
+    const target = bleTags.find((item) => item.id === id);
+    if (!target) return;
+
+    try {
+      await updateFamilyPath(familyId, `ble_tags/${id}`, {
+        connectionStatus: "disconnected",
+        updatedAt: Date.now(),
+      });
+      pushFeedItem({
+        level: "warning",
+        title: "BLE tag disconnected",
+        message: `${target.name} is no longer paired to the active caregiver session.`,
+      });
+      pushToast("Tag disconnected.");
+    } catch (error) {
+      console.error(error);
+      pushToast("Failed to disconnect tag.");
     }
   }
 
@@ -433,10 +737,22 @@ export default function App() {
   function renderMainContent() {
     if (activeTab === "history") {
       return (
-        <HistoryScreen
-          historyItems={historyItems}
-          trackerAlert={trackerAlert}
-          pushToast={pushToast}
+        <ManagementScreen
+          routines={routines}
+          bleTags={bleTags}
+          feedItems={feedItems}
+          onAddNew={() => void handleAddNew()}
+          onModeChange={handleModeChange}
+          onFieldChange={handleFieldChange}
+          onTrigger={(id) => void handleTrigger(id)}
+          onSave={(id) => void handleSave(id)}
+          onOpenEmergency={() => setShowEmergencyModal(true)}
+          onToggleTag={(id) => void handleToggleTag(id)}
+          onAddTag={(name, location, hardwareId) => handleAddTag(name, location, hardwareId)}
+          onUpdateTag={(id, patch) => void handleUpdateTag(id, patch)}
+          onDeleteTag={(id) => void handleDeleteTag(id)}
+          onConnectTag={(id) => void handleConnectTag(id)}
+          onDisconnectTag={(id) => void handleDisconnectTag(id)}
         />
       );
     }
@@ -467,14 +783,9 @@ export default function App() {
       <HomeScreen
         elder={elder}
         kiosk={kiosk}
-        routines={routines}
         trackerAlert={trackerAlert}
-        onAddNew={() => void handleAddNew()}
-        onModeChange={handleModeChange}
-        onFieldChange={handleFieldChange}
-        onTrigger={(id) => void handleTrigger(id)}
-        onSave={(id) => void handleSave(id)}
-        onOpenEmergency={() => setShowEmergencyModal(true)}
+        completedRoutines={completedRoutines}
+        upcomingRoutine={upcomingRoutine}
       />
     );
   }
@@ -510,112 +821,6 @@ export default function App() {
         />
       ) : null}
     </div>
-  );
-}
-
-function HistoryScreen({
-  historyItems,
-  trackerAlert,
-  pushToast,
-}: {
-  historyItems: Routine[];
-  trackerAlert: any;
-  pushToast: (message: string) => void;
-}) {
-  return (
-    <section className="space-y-6">
-      <div className="card-shell p-6 sm:p-8">
-        <p className="text-lg font-semibold text-slate-600">History</p>
-        <h1 className="mt-2 text-4xl font-extrabold tracking-tight text-slate-900 sm:text-5xl">
-          Review activity and care events
-        </h1>
-        <p className="mt-4 max-w-3xl text-lg font-medium leading-8 text-slate-600">
-          This timeline gives caregivers a quick read of recent reminders, tracker changes,
-          and kiosk-related events in the prototype.
-        </p>
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-[1.4fr_0.9fr]">
-        <section className="card-shell p-5 sm:p-6 lg:p-8">
-          <div className="flex items-center justify-between gap-4">
-            <h2 className="text-3xl font-extrabold text-slate-900 sm:text-4xl">
-              Recent routines
-            </h2>
-            <button
-              type="button"
-              onClick={() => pushToast("Export is not available in demo mode.")}
-              className="text-lg font-bold text-brand transition hover:text-blue-700"
-            >
-              Export
-            </button>
-          </div>
-
-          <div className="mt-6 space-y-4">
-            {historyItems.length === 0 ? (
-              <div className="info-box">
-                <p className="text-xl font-semibold text-slate-600">No routine history yet.</p>
-              </div>
-            ) : (
-              historyItems.slice(0, 8).map((item) => (
-                <div
-                  key={item.id}
-                  className="rounded-[22px] border border-slate-200/80 bg-lavender px-5 py-4"
-                >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <h3 className="text-2xl font-extrabold text-slate-900">{item.name}</h3>
-                      <p className="mt-1 text-base font-semibold text-slate-600">{item.note}</p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="pill-button bg-white text-slate-700">{item.status}</span>
-                      <span className="text-lg font-bold text-brand">
-                        {formatClock(item.time)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
-
-        <section className="space-y-6">
-          <div className="card-shell p-5 sm:p-6">
-            <h2 className="text-3xl font-extrabold text-slate-900">Tracker summary</h2>
-            <p className="mt-3 text-lg font-medium text-slate-600">
-              Latest tracker alert status is shown here for quick review.
-            </p>
-            <div className="mt-5 rounded-[22px] bg-lavender p-5">
-              <p className="text-sm font-bold uppercase tracking-[0.24em] text-slate-500">
-                Current state
-              </p>
-              <p className="mt-3 text-2xl font-extrabold text-slate-900">
-                {trackerAlert.is_active ? "Alert active" : "No active alert"}
-              </p>
-              <p className="mt-2 text-base font-semibold text-slate-600">
-                {trackerAlert.message || "The tracker has not reported a new issue."}
-              </p>
-            </div>
-          </div>
-
-          <div className="card-shell p-5 sm:p-6">
-            <h2 className="text-3xl font-extrabold text-slate-900">Kiosk notes</h2>
-            <div className="mt-5 space-y-4">
-              {[
-                "Living Room Kiosk connected in demo mode",
-                "Tracker stream synced recently",
-                "Voice reminder support is active on the kiosk prototype",
-              ].map((note) => (
-                <div key={note} className="flex items-start gap-3 rounded-[20px] bg-lavender p-4">
-                  <CheckCircle2 className="mt-0.5 h-5 w-5 text-active" />
-                  <p className="text-base font-semibold text-slate-700">{note}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-      </div>
-    </section>
   );
 }
 
@@ -1519,4 +1724,128 @@ function buildTaskNote(task: any) {
   }
 
   return task.is_auto ? "Auto mode enabled" : "Manual mode only";
+}
+
+function normalizeRoutinePeriod(periodValue?: string, timeValue?: string): RoutinePeriod {
+  if (periodValue === "morning" || periodValue === "afternoon" || periodValue === "evening") {
+    return periodValue;
+  }
+
+  const [hourText = "9"] = (timeValue || "09:00").split(":");
+  const hour = Number(hourText);
+  if (hour < 12) return "morning";
+  if (hour < 17) return "afternoon";
+  return "evening";
+}
+
+function buildInitialFeed(): AlertFeedItem[] {
+  return [
+    {
+      id: "feed_boot_1",
+      level: "success",
+      title: "Caregiver dashboard online",
+      message: "Home station and caregiver workspace are ready for routine monitoring.",
+      timestampLabel: "Just now",
+    },
+    {
+      id: "feed_boot_2",
+      level: "info",
+      title: "Tracker sync healthy",
+      message: "Wearable stream is available for vitals, geofence, and safety alerts.",
+      timestampLabel: "Just now",
+    },
+  ];
+}
+
+function buildAlertFeed(
+  {
+    elder,
+    kiosk,
+    trackerAlert,
+    routines,
+    bleTags,
+  }: {
+    elder: any;
+    kiosk: any;
+    trackerAlert: any;
+    routines: Routine[];
+    bleTags: BleTag[];
+  },
+  existing: AlertFeedItem[],
+) {
+  const computed: AlertFeedItem[] = [];
+  const kioskOnline =
+    kiosk.online && kiosk.lastHeartbeatAt && Date.now() - kiosk.lastHeartbeatAt < 30000;
+
+  computed.push({
+    id: "system_kiosk",
+    level: kioskOnline ? "success" : "warning",
+    title: kioskOnline ? "Kiosk connected" : "Kiosk heartbeat delayed",
+    message: kioskOnline
+      ? `${kiosk.name || "Living Room Kiosk"} is online and receiving reminders.`
+      : `${kiosk.name || "Living Room Kiosk"} has not reported a recent heartbeat.`,
+    timestampLabel: kiosk.lastHeartbeatAt ? formatRelativeTime(kiosk.lastHeartbeatAt) : "No heartbeat",
+  });
+
+  const unsafeTags = bleTags.filter((tag) => tag.status === "away");
+  if (unsafeTags.length > 0) {
+    unsafeTags.forEach((tag) => {
+      computed.push({
+        id: `tag_${tag.id}`,
+        level: "warning",
+        title: "BLE tag outside home range",
+        message: `${tag.name} is away from ${tag.location}.`,
+        timestampLabel: "Needs check",
+      });
+    });
+  } else {
+    computed.push({
+      id: "tag_safe",
+      level: "success",
+      title: "BLE tags in range",
+      message: "Wallet, keys, and pillbox are all near the home station.",
+      timestampLabel: "Current",
+    });
+  }
+
+  const activeTracker =
+    trackerAlert.is_active === true ||
+    trackerAlert.is_active === "true" ||
+    trackerAlert.is_active === "True";
+
+  computed.push({
+    id: "tracker_state",
+    level: activeTracker ? "danger" : elder.status === "in_home" ? "success" : "warning",
+    title: activeTracker ? "Tracker alert active" : "Safe zone monitoring",
+    message: activeTracker
+      ? trackerAlert.message || "The wearable tracker detected a safety issue."
+      : elder.status === "in_home"
+        ? "Care recipient is currently inside the configured home zone."
+        : "Care recipient appears outside the usual home zone.",
+    timestampLabel: trackerAlert.updatedAt
+      ? formatRelativeTime(Number(trackerAlert.updatedAt))
+      : elder.lastSeenAt
+        ? formatRelativeTime(Number(elder.lastSeenAt))
+        : "No recent data",
+  });
+
+  routines
+    .filter((routine) => routine.updatedAt)
+    .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
+    .slice(0, 2)
+    .forEach((routine) => {
+      computed.push({
+        id: `routine_${routine.id}`,
+        level:
+          routine.status === "Completed" ? "success" : routine.status === "Running" ? "info" : "info",
+        title: `Routine ${routine.status.toLowerCase()}`,
+        message: `${routine.name} is scheduled for ${formatClock(routine.time)} in the ${routine.period} window.`,
+        timestampLabel:
+          typeof routine.updatedAt === "number"
+            ? formatRelativeTime(routine.updatedAt)
+            : "Recently updated",
+      });
+    });
+
+  return [...existing.filter((item) => item.id.startsWith("feed_")), ...computed].slice(0, 8);
 }

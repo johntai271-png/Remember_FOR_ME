@@ -1,6 +1,7 @@
 export type RoutineStatus = "Completed" | "Pending" | "Running";
 export type ViewMode = "view" | "edit";
 export type AppTab = "home" | "history" | "settings";
+export type RoutinePeriod = "morning" | "afternoon" | "evening";
 
 export type SettingsPage =
   | "root"
@@ -55,10 +56,33 @@ export type Routine = {
   name: string;
   time: string;
   autoRun: boolean;
+  period: RoutinePeriod;
+  voiceEnabled: boolean;
   status: RoutineStatus;
   note: string;
   updatedAt?: string | number;
   mode: ViewMode;
+};
+
+export type BleTagStatus = "safe" | "away";
+export type BleTagConnectionStatus = "connected" | "disconnected" | "pairing";
+
+export type BleTag = {
+  id: string;
+  name: string;
+  location: string;
+  hardwareId: string;
+  status: BleTagStatus;
+  connectionStatus: BleTagConnectionStatus;
+  lastConnectedAt?: number | null;
+};
+
+export type AlertFeedItem = {
+  id: string;
+  level: "info" | "success" | "warning" | "danger";
+  title: string;
+  message: string;
+  timestampLabel: string;
 };
 
 export type ToastState = {
