@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Remember.For.Me - Ambient Dementia Care Ecosystem (Offline Simulation)</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    
+    <!-- Main Header -->
+    <header class="main-header">
+      <div class="brand-section">
+        <div class="brand-logo">R</div>
+        <div class="brand-name">Remember.For.Me (Simulator)</div>
+      </div>
+      
+      <!-- View Control Switcher -->
+      <div class="view-controls">
+        <button id="btn-cg-view" class="view-btn active">Caregiver Portal</button>
+        <button id="btn-pk-view" class="view-btn">Patient Kiosk</button>
+        <button id="btn-split-view" class="view-btn">Split Screen Simulator</button>
+      </div>
+    </header>
+
+    <!-- Main Screens Switcher -->
+    <main style="flex: 1; display: flex; flex-direction: column;">
+      
+      <!-- 1. Caregiver Dashboard View -->
+      <section id="cg-view" class="screen active">
+        <div class="cg-dashboard">
+          
+          <!-- Left Column: Wearable & Proximity Tags -->
+          <div class="glass-card" style="grid-column: span 1;">
+            <h3 class="card-title">
+              <span style="font-size: 1.25rem;">🩺</span> Wearable Safety Tracker
+            </h3>
+            
+            <div class="vitals-grid">
+              <div id="box-heart-rate" class="vital-box">
+                <div class="vital-label">Heart Rate</div>
+                <div class="vital-value">
+                  <span id="txt-heart-rate">72</span> 
+                  <span class="vital-unit">BPM</span>
+                </div>
+              </div>
+              <div id="box-battery" class="vital-box">
+                <div class="vital-label">Tracker Battery</div>
+                <div class="vital-value">
+                  <span id="txt-battery">88</span><span class="vital-unit">%</span>
+                </div>
+              </div>
+              <div id="box-gps" class="vital-box" style="grid-column: span 2;">
+                <div class="vital-label">Safety Status</div>
+                <div class="vital-value" id="txt-safety-status" style="font-size: 1.15rem; color: var(--status-safe); font-weight: 600;">
+                  🟢 Safe inside Home Zone
+                </div>
+              </div>
+            </div>
+            
+            <div style="font-size: 0.75rem; color: var(--cg-text-secondary); border-top: 1px solid rgba(255,255,255,0.05); padding-top: 0.75rem;">
+              <p>📡 Cellular Status: <strong>Strong (LTE-M)</strong></p>
+              <p>📍 Coordinates: <strong id="txt-coords">1.3521° N, 103.8198° E</strong></p>
+            </div>
+
+            <h3 class="card-title" style="margin-top: 1.25rem;">
+              <span style="font-size: 1.25rem;">🏷️</span> BLE Proximity Tags
+            </h3>
+            <div class="tag-list" id="ble-tag-list">
+              <!-- Rendered via JS -->
+            </div>
+          </div>
+
+          <!-- Middle Column: Live Map & Routines -->
+          <div class="middle-column">
+            <!-- Map Container -->
+            <div class="map-container">
+              <div class="map-overlay-info">
+                📍 Home Zone Geofence (Radius: 150m)
+              </div>
+              <!-- Simulated Canvas/SVG Map -->
+              <svg class="map-svg" viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg">
+                <!-- Grid background -->
+                <defs>
+                  <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                    <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
+                  </pattern>
+                </defs>
+                <rect width="100%" height="100%" fill="url(#grid)" />
+                
+                <!-- Simulated Roads & Blocks -->
+                <rect x="0" y="80" width="400" height="15" fill="#1e293b" opacity="0.6"/>
+                <rect x="0" y="210" width="400" height="15" fill="#1e293b" opacity="0.6"/>
+                <rect x="120" y="0" width="15" height="300" fill="#1e293b" opacity="0.6"/>
+                <rect x="280" y="0" width="15" height="300" fill="#1e293b" opacity="0.6"/>
+                
+                <!-- Home Landmark -->
+                <circle cx="200" cy="150" r="10" fill="#3b82f6" opacity="0.3"/>
+                <rect x="195" y="145" width="10" height="10" fill="#60a5fa" rx="2"/>
+                <text x="212" y="154" fill="#9ca3af" font-size="9" font-family="Outfit">HOME STATION</text>
+                
+                <!-- Geofence Zone Boundary -->
+                <circle id="map-geofence" cx="200" cy="150" r="75" fill="rgba(16, 185, 129, 0.05)" stroke="var(--status-safe)" stroke-width="1.5" stroke-dasharray="4 3"/>
+                
+                <!-- Pulsing Tracker Dot -->
+                <circle id="map-tracker-glow" cx="200" cy="150" r="12" fill="rgba(59, 130, 246, 0.4)"/>
+                <circle id="map-tracker" cx="200" cy="150" r="6" fill="#3b82f6"/>
+              </svg>
+            </div>
+
+            <!-- Routine Configuration -->
+            <div class="glass-card">
+              <div class="routines-header">
+                <h3 class="card-title" style="border: none; padding: 0; margin: 0;">
+                  <span style="font-size: 1.25rem;">📅</span> Caregiver-Managed Routines
+                </h3>
+                <button class="primary-btn" id="btn-add-routine">+ Add Routine</button>
+              </div>
+              <div class="routine-list" id="routine-list-feed">
+                <!-- Rendered via JS -->
+              </div>
+            </div>
+          </div>
+
+          <!-- Right Column: Alert Timeline Feed & Help -->
+          <div class="glass-card" style="grid-column: span 1;">
+            <div class="routines-header">
+              <h3 class="card-title" style="border: none; padding: 0; margin: 0;">
+                <span style="font-size: 1.25rem;">🚨</span> Alerts Timeline
+              </h3>
+              <button class="secondary-btn" id="btn-clear-alerts" style="padding: 0.25rem 0.6rem; font-size: 0.75rem;">Clear Log</button>
+            </div>
+            <div class="alert-feed" id="alert-timeline-feed">
+              <!-- Rendered via JS -->
+            </div>
+            
+            <div class="setup-link-box">
+              <div class="setup-link-title">
+                <span>📱</span> BYOD Kiosk Setup Guide
+              </div>
+              <p class="setup-link-desc">Learn how to lock legacy Android and iOS tablets into secure 24/7 Home Kiosk mode.</p>
+              <button class="primary-btn" id="btn-open-setup-guide" style="background: rgba(59, 130, 246, 0.2); color: #93c5fd; box-shadow: none; border: 1px solid rgba(59, 130, 246, 0.4); margin-top: 0.25rem;">
+                Open Setup Manual
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- 2. Patient Ambient Kiosk View -->
+      <section id="pk-view" class="screen">
+        <div class="pk-screen-container" style="width: 100%;">
+          <div class="kiosk-grid">
+            
+            <!-- Left Side: Time, Date, Weather & Warm Reassurance -->
+            <div class="kiosk-left">
+              <div class="clock-display">
+                <div class="kiosk-time" id="kiosk-clock">09:30</div>
+                <div class="kiosk-date" id="kiosk-calendar-date">Tuesday, June 30</div>
+                
+                <div class="weather-widget">
+                  <span class="weather-icon">☀️</span>
+                  <div>
+                    <div class="weather-temp">31°C</div>
+                    <div class="weather-desc">Sunny & warm in Singapore</div>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Giant comforting notification box to prevent wandering paranoia -->
+              <div class="kiosk-reassurance-box">
+                <div class="reassurance-title">👋 You are Safe at Home</div>
+                <div class="reassurance-msg" id="kiosk-reassurance-text">
+                  Today is Tuesday. Your son Michael is at work and will be back at 6:30 PM. There is fresh tea on the table.
+                </div>
+              </div>
+            </div>
+
+            <!-- Right Side: 3-Period Legible Routine Timeline -->
+            <div class="kiosk-right">
+              <h2 class="period-title">Your Routine Today</h2>
+              <div class="schedule-timeline">
+                
+                <!-- Morning Period -->
+                <div id="period-morning-block" class="timeline-period-block active">
+                  <div class="period-header">
+                    <span class="period-name-label" style="color: var(--period-morning-text);">🌅 Morning Routine</span>
+                    <span class="period-status-indicator" id="ind-morning" style="color: var(--period-morning-text);">Current Period</span>
+                  </div>
+                  <div class="period-events-container" id="kiosk-morning-events">
+                    <!-- JS loaded morning tasks -->
+                  </div>
+                </div>
+
+                <!-- Afternoon Period -->
+                <div id="period-afternoon-block" class="timeline-period-block">
+                  <div class="period-header">
+                    <span class="period-name-label" style="color: var(--period-afternoon-text);">☀️ Afternoon Routine</span>
+                    <span class="period-status-indicator" id="ind-afternoon" style="display: none; color: var(--period-afternoon-text);">Current Period</span>
+                  </div>
+                  <div class="period-events-container" id="kiosk-afternoon-events">
+                    <!-- JS loaded afternoon tasks -->
+                  </div>
+                </div>
+
+                <!-- Evening Period -->
+                <div id="period-evening-block" class="timeline-period-block">
+                  <div class="period-header">
+                    <span class="period-name-label" style="color: var(--period-evening-text);">🌙 Evening Routine</span>
+                    <span class="period-status-indicator" id="ind-evening" style="display: none; color: var(--period-evening-text);">Current Period</span>
+                  </div>
+                  <div class="period-events-container" id="kiosk-evening-events">
+                    <!-- JS loaded evening tasks -->
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. Split Screen Simulator Layout -->
+      <section id="split-view" class="screen" style="flex-direction: row; flex: 1;">
+        <!-- Left: Caregiver Portal embedded -->
+        <div id="split-cg-container" style="flex: 1.1; border-right: 2px solid #1e293b; overflow-y: auto; background-color: var(--cg-bg);">
+          <!-- Caregiver elements are cloned/transferred here via state or displayed side-by-side -->
+        </div>
+        <!-- Right: Patient Kiosk View embedded -->
+        <div id="split-pk-container" style="flex: 0.9; overflow-y: auto; background-color: var(--pk-bg);">
+          <!-- Patient Kiosk element is shown here -->
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Interactive Device Simulator Control Panel (Collapsible Overlay) -->
+    <div id="simulator-panel" class="simulator-panel">
+      <div class="sim-header">
+        <span>⚙️ Caregiver simulator</span>
+        <button id="btn-toggle-sim" class="sim-toggle-btn">▼</button>
+      </div>
+      <div class="sim-body">
+        
+        <div class="sim-section-title">Wearable GPS Simulator</div>
+        <div class="sim-control-group">
+          <button id="sim-btn-wandering" class="sim-btn danger-action">
+            <span>Simulate Wandering (Exit Geofence)</span>
+            <div id="sim-wandering-status" class="sim-btn-status"></div>
+          </button>
+        </div>
+        
+        <div class="sim-section-title">Vitals Simulator</div>
+        <div class="sim-control-group">
+          <div class="sim-slider-label">
+            <span>Heart Rate:</span>
+            <span><strong id="sim-val-hr">72</strong> BPM</span>
+          </div>
+          <input type="range" id="sim-slider-hr" class="sim-slider" min="40" max="140" value="72">
+        </div>
+
+        <div class="sim-section-title">BLE tags proximity</div>
+        <div class="sim-control-group">
+          <button id="sim-btn-tag-wallet" class="sim-btn">
+            <span>Wallet Tag Proximity</span>
+            <span id="sim-status-tag-wallet" style="color: var(--status-safe); font-size: 0.75rem; font-weight: 600;">In Range</span>
+          </button>
+          <button id="sim-btn-tag-keys" class="sim-btn">
+            <span>House Keys Proximity</span>
+            <span id="sim-status-tag-keys" style="color: var(--status-safe); font-size: 0.75rem; font-weight: 600;">In Range</span>
+          </button>
+          <button id="sim-btn-tag-pillbox" class="sim-btn">
+            <span>Pillbox Tag Proximity</span>
+            <span id="sim-status-tag-pillbox" style="color: var(--status-safe); font-size: 0.75rem; font-weight: 600;">In Range</span>
+          </button>
+        </div>
+
+        <div class="sim-section-title">Voice routine trigger</div>
+        <div class="sim-control-group">
+          <button id="sim-btn-trigger-voice" class="sim-btn" style="border-color: var(--cg-accent);">
+            <span>📢 Force Active Voice Reminder</span>
+            <span>Trigger</span>
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Active Ambient Reminder Popup Overlay -->
+    <div id="voice-announcement-overlay" class="voice-announcement-overlay">
+      <div class="voice-announcement-card">
+        <div class="announcement-icon-ring">
+          🔔
+          <div class="voice-wave-ring"></div>
+          <div class="voice-wave-ring-delayed"></div>
+        </div>
+        <div class="announcement-title">Reminder Aloud</div>
+        <div class="announcement-text" id="voice-announcement-text">
+          Time to take your medication.
+        </div>
+        <div class="announcement-sub">Reading aloud configured caregiver voice message...</div>
+        <button id="btn-dismiss-announcement" class="dismiss-announcement-btn">Okay, I remember</button>
+      </div>
+    </div>
+
+    <!-- Add Routine Form Modal -->
+    <div id="add-routine-modal" class="modal-backdrop">
+      <div class="modal-card">
+        <div class="modal-header">Add Daily Routine</div>
+        <div class="form-group">
+          <label for="input-task-name">Task Description</label>
+          <input type="text" id="input-task-name" class="form-input" placeholder="e.g. Drink warm milk, Afternoon Nap, Take Vitals">
+        </div>
+        
+        <div class="form-row">
+          <div class="form-group">
+            <label for="select-period">Time Period</label>
+            <select id="select-period" class="form-select">
+              <option value="morning">Morning Routine</option>
+              <option value="afternoon">Afternoon Routine</option>
+              <option value="evening">Evening Routine</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="input-time">Schedule Time</label>
+            <input type="time" id="input-time" class="form-input" value="08:00">
+          </div>
+        </div>
+
+        <div class="form-group" style="flex-direction: row; gap: 0.5rem; align-items: center; margin-top: 0.5rem;">
+          <input type="checkbox" id="check-voice" checked style="width: 1rem; height: 1rem; accent-color: var(--cg-accent);">
+          <label for="check-voice" style="text-transform: none; font-size: 0.85rem; color: white;">Enable Ambient Voice Announcement</label>
+        </div>
+
+        <div class="modal-actions">
+          <button id="btn-cancel-modal" class="secondary-btn">Cancel</button>
+          <button id="btn-save-modal" class="primary-btn">Save Routine</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Setup Guide Modal -->
+    <div id="setup-guide-modal" class="modal-backdrop">
+      <div class="modal-card kiosk-instructions-modal">
+        <div class="modal-header">⚙️ BYOD Tablet Kiosk Setup Manual</div>
+        
+        <div class="kiosk-steps">
+          <div class="step-item">
+            <div class="step-num">1</div>
+            <div class="step-detail">
+              <strong>Position Tablet Home Station:</strong> Place your legacy Android or iOS tablet on a sturdy stand in the living room, connected constantly to the wall charger.
+            </div>
+          </div>
+          <div class="step-item">
+            <div class="step-num">2</div>
+            <div class="step-detail">
+              <strong>Lock Screen/Kiosk Enforcement:</strong>
+              <p style="margin-top: 0.25rem;">📱 <em>iOS (iPads):</em> Enable <strong>Guided Access</strong> via Settings > Accessibility. Open this browser app and triple-click the Home/Power button to lock the patient inside the screen.</p>
+              <p style="margin-top: 0.25rem;">🤖 <em>Android:</em> Enable <strong>Screen Pinning</strong> via Settings > Security. Open this browser app, view recent apps list, tap the app icon and select "Pin App".</p>
+            </div>
+          </div>
+          <div class="step-item">
+            <div class="step-num">3</div>
+            <div class="step-detail">
+              <strong>Proximity Placement:</strong> Put the Bluetooth Smart Tag inside the patient's wallet or pocket, and fit the Wearable Safety Tracker on their wrist. The systems will sync automatically.
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button id="btn-close-setup" class="primary-btn">Got It, Close</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
