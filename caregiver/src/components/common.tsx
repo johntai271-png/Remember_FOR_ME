@@ -16,9 +16,9 @@ export function Header({
         <img
           src={avatarSrc}
           alt="Caregiver avatar"
-          className="h-12 w-12 rounded-full border-[3px] border-brand object-cover sm:h-16 sm:w-16"
+          className="h-11 w-11 rounded-full border-[3px] border-brand object-cover sm:h-14 sm:w-14"
         />
-        <div className="text-[34px] font-black tracking-tight text-brand sm:text-[52px] lg:text-[68px]">
+        <div className="text-[28px] font-black tracking-tight text-brand sm:text-[40px] lg:text-[52px]">
           Remember.For.Me
         </div>
       </div>
@@ -44,13 +44,13 @@ export function BottomNavigation({
 }) {
   const tabs = [
     { label: "Home", icon: Home, value: "home" as const },
-    { label: "History", icon: History, value: "history" as const },
+    { label: "Manage", icon: History, value: "history" as const },
     { label: "Settings", icon: Settings, value: "settings" as const },
   ];
 
   return (
     <>
-      <nav className="fixed inset-x-3 bottom-0 z-40 rounded-t-[28px] border border-white/80 bg-white/95 px-4 pb-5 pt-4 shadow-[0_-10px_30px_rgba(28,39,72,0.08)] backdrop-blur sm:inset-x-8">
+      <nav className="fixed inset-x-3 bottom-0 z-40 rounded-t-[28px] border border-white/80 bg-white/95 px-4 pb-4 pt-3 shadow-[0_-10px_30px_rgba(28,39,72,0.08)] backdrop-blur sm:inset-x-8">
         <div className="mx-auto grid max-w-[1720px] grid-cols-3 gap-4">
           {tabs.map((tab) => {
             const active = activeTab === tab.value;
@@ -59,16 +59,16 @@ export function BottomNavigation({
                 key={tab.label}
                 type="button"
                 onClick={() => onChange(tab.value)}
-                className={`flex flex-col items-center justify-center gap-1 rounded-full px-4 py-3 text-lg font-semibold ${
+                className={`flex flex-col items-center justify-center gap-1 rounded-full px-4 py-2 text-base font-semibold ${
                   active ? "text-[#351898]" : "text-slate-600"
                 }`}
               >
                 <span
-                  className={`inline-flex h-14 min-w-[110px] items-center justify-center gap-2 rounded-full px-6 transition ${
+                  className={`inline-flex h-12 min-w-[100px] items-center justify-center gap-2 rounded-full px-5 transition ${
                     active ? "bg-active/85 text-[#351898]" : "bg-transparent"
                   }`}
                 >
-                  <tab.icon className="h-7 w-7" />
+                  <tab.icon className="h-6 w-6" />
                   {tab.label}
                 </span>
               </button>
@@ -81,7 +81,7 @@ export function BottomNavigation({
         type="button"
         aria-label="Help"
         onClick={() => onChange("settings")}
-        className="fixed bottom-4 right-4 z-50 inline-flex h-14 w-14 items-center justify-center rounded-full bg-[#2a2a2a] text-3xl font-medium text-white shadow-xl"
+        className="fixed bottom-4 right-4 z-50 inline-flex h-12 w-12 items-center justify-center rounded-full bg-[#2a2a2a] text-2xl font-medium text-white shadow-xl"
       >
         ?
       </button>
@@ -97,7 +97,7 @@ export function Toast({
   onDismiss: () => void;
 }) {
   return (
-    <div className="fixed bottom-28 left-1/2 z-50 w-[min(92vw,420px)] -translate-x-1/2 rounded-2xl bg-slate-900 px-5 py-4 text-base font-medium text-white shadow-2xl">
+    <div className="fixed bottom-24 left-1/2 z-50 w-[min(92vw,400px)] -translate-x-1/2 rounded-2xl bg-slate-900 px-5 py-3 text-sm font-medium text-white shadow-2xl">
       <div className="flex items-start justify-between gap-4">
         <span>{message}</span>
         <button type="button" onClick={onDismiss} className="text-white/70 hover:text-white">
@@ -123,21 +123,21 @@ export function ConfirmationModal({
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4">
-      <div className="w-full max-w-lg rounded-[28px] bg-white p-6 shadow-2xl sm:p-8">
-        <h3 className="text-3xl font-extrabold text-slate-900">{title}</h3>
-        <p className="mt-3 text-lg text-slate-600">{body}</p>
+      <div className="w-full max-w-lg rounded-[28px] bg-white p-6 shadow-2xl sm:p-7">
+        <h3 className="text-2xl font-extrabold text-slate-900">{title}</h3>
+        <p className="mt-3 text-base text-slate-600">{body}</p>
         <div className="mt-8 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
           <button
             type="button"
             onClick={onCancel}
-            className="rounded-full border border-slate-200 px-6 py-3 text-lg font-semibold text-slate-700 transition hover:bg-slate-50"
+            className="rounded-full border border-slate-200 px-5 py-2.5 text-base font-semibold text-slate-700 transition hover:bg-slate-50"
           >
             Cancel
           </button>
           <button
             type="button"
             onClick={onConfirm}
-            className="rounded-full bg-[#c91818] px-6 py-3 text-lg font-semibold text-white transition hover:bg-[#b11212]"
+            className="rounded-full bg-[#c91818] px-5 py-2.5 text-base font-semibold text-white transition hover:bg-[#b11212]"
           >
             {confirmLabel}
           </button>
@@ -157,11 +157,11 @@ export function InfoBox({
   value: ReactNode;
 }) {
   return (
-    <article className="info-box min-h-[140px] sm:min-h-[160px]">
+    <article className="info-box min-h-[116px] sm:min-h-[132px]">
       {icon ? <div className="mb-3">{icon}</div> : null}
       <div className="space-y-1">
-        <p className="text-xl font-medium text-slate-600 sm:text-[18px]">{label}</p>
-        <div className="text-2xl font-extrabold text-slate-900 sm:text-[22px]">{value}</div>
+        <p className="text-base font-medium text-slate-600 sm:text-[16px]">{label}</p>
+        <div className="text-xl font-extrabold text-slate-900 sm:text-[20px]">{value}</div>
       </div>
     </article>
   );
