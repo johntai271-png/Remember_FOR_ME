@@ -27,13 +27,23 @@ export function HomeScreen({
   trackerAlert,
   completedRoutines,
   upcomingRoutine,
+  dataLoading,
+  onSimulateLocation,
+  onSimulateHeartRate,
+  onResetSimulation,
 }: {
   elder: any;
   kiosk: any;
   trackerAlert: any;
   completedRoutines: Routine[];
   upcomingRoutine: Routine | null;
+  dataLoading: boolean;
+  onSimulateLocation: (status: "in_home" | "out_of_home") => Promise<void>;
+  onSimulateHeartRate: (bpm: number, label: "Normal" | "High" | "Low") => Promise<void>;
+  onResetSimulation: () => Promise<void>;
 }) {
+  if (dataLoading) return <SkeletonHome />;
+
   return (
     <>
       <section className="space-y-3">
@@ -57,6 +67,14 @@ export function HomeScreen({
         <CompletedTasksCard completedRoutines={completedRoutines} />
         <UpcomingTaskCard upcomingRoutine={upcomingRoutine} />
       </section>
+
+      {/* Demo Simulation Controls */}
+      <SimulationPanel
+        elder={elder}
+        onSimulateLocation={onSimulateLocation}
+        onSimulateHeartRate={onSimulateHeartRate}
+        onResetSimulation={onResetSimulation}
+      />
     </>
   );
 }
@@ -65,10 +83,12 @@ export function ManagementScreen({
   routines,
   bleTags,
   feedItems,
+  dataLoading,
   onAddNew,
   onModeChange,
   onFieldChange,
   onTrigger,
+  onReset,
   onSave,
   onOpenEmergency,
   onToggleTag,
@@ -77,14 +97,17 @@ export function ManagementScreen({
   onDeleteTag,
   onConnectTag,
   onDisconnectTag,
+  onClearCompleted,
 }: {
   routines: Routine[];
   bleTags: BleTag[];
   feedItems: AlertFeedItem[];
+  dataLoading: boolean;
   onAddNew: () => void;
   onModeChange: (id: string, mode: ViewMode) => void;
   onFieldChange: <K extends keyof Routine>(id: string, key: K, value: Routine[K]) => void;
   onTrigger: (id: string) => void;
+  onReset: (id: string) => void;
   onSave: (id: string) => void;
   onOpenEmergency: () => void;
   onToggleTag: (id: string) => void;
@@ -93,7 +116,21 @@ export function ManagementScreen({
   onDeleteTag: (id: string) => void;
   onConnectTag: (id: string) => void;
   onDisconnectTag: (id: string) => void;
+  onClearCompleted: () => void;
 }) {
+  const [filterPeriod, setFilterPeriod] = useState<"all" | "morning" | "afternoon" | "evening">("all");
+  const [showCompletedList, setShowCompletedList] = useState(false);
+
+  if (dataLoading) return <SkeletonManage />;
+
+  const activeRoutines = routines.filter((routine) => routine.status !== "Completed");
+  const completedRoutines = routines.filter((routine) => routine.status === "Completed");
+
+  const filteredRoutines = activeRoutines.filter((routine) => {
+    if (filterPeriod === "all") return true;
+    return routine.period === filterPeriod;
+  });
+
   return (
     <section className="space-y-6">
       <div className="card-shell p-5 sm:p-6">
@@ -134,18 +171,100 @@ export function ManagementScreen({
           </button>
         </div>
 
-        <div className="space-y-6">
-          {routines.map((routine) => (
-            <RoutineCard
-              key={routine.id}
-              routine={routine}
-              onModeChange={onModeChange}
-              onFieldChange={onFieldChange}
-              onTrigger={onTrigger}
-              onSave={onSave}
-            />
+        {/* Period Filter Buttons */}
+        <div className="flex flex-wrap gap-2 pb-1">
+          {(["all", "morning", "afternoon", "evening"] as const).map((period) => (
+            <button
+              key={period}
+              type="button"
+              onClick={() => setFilterPeriod(period)}
+              className={`rounded-full px-4 py-2 text-sm font-extrabold uppercase tracking-wider transition ${
+                filterPeriod === period
+                  ? "bg-active text-white shadow-sm"
+                  : "bg-lavender text-slate-600 hover:bg-slate-200"
+              }`}
+            >
+              {period === "all"
+                ? "🌍 All"
+                : period === "morning"
+                  ? "🌅 Morning"
+                  : period === "afternoon"
+                    ? "☀️ Afternoon"
+                    : "🌙 Evening"}
+            </button>
           ))}
         </div>
+
+        <div className="space-y-6">
+          {filteredRoutines.length === 0 ? (
+            <div className="info-box py-6 text-center">
+              <p className="text-lg font-semibold text-slate-500">No active routines scheduled for this period.</p>
+            </div>
+          ) : (
+            filteredRoutines.map((routine) => (
+              <RoutineCard
+                key={routine.id}
+                routine={routine}
+                onModeChange={onModeChange}
+                onFieldChange={onFieldChange}
+                onTrigger={onTrigger}
+                onReset={onReset}
+                onSave={onSave}
+              />
+            ))
+          )}
+        </div>
+
+        {/* Collapsible Completed Routines Section */}
+        {completedRoutines.length > 0 && (
+          <div className="pt-6 border-t border-slate-200/85 space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <button
+                type="button"
+                onClick={() => setShowCompletedList(!showCompletedList)}
+                className="inline-flex items-center gap-2 text-lg font-extrabold text-slate-500 hover:text-slate-700 transition outline-none"
+              >
+                <span>{showCompletedList ? "▼" : "▶"} Completed Routines ({completedRoutines.length})</span>
+              </button>
+              {showCompletedList && (
+                <button
+                  type="button"
+                  onClick={onClearCompleted}
+                  className="rounded-full bg-slate-100 border border-slate-200/60 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 transition shrink-0"
+                >
+                  Clear All
+                </button>
+              )}
+            </div>
+
+            {showCompletedList && (
+              <div className="grid gap-4 sm:grid-cols-2">
+                {completedRoutines.map((routine) => (
+                  <div
+                    key={routine.id}
+                    className="rounded-[22px] border border-slate-200/80 bg-slate-100/50 p-4 flex items-center justify-between gap-4"
+                  >
+                    <div className="min-w-0">
+                      <h3 className="text-lg font-extrabold text-slate-500 line-through truncate">
+                        {routine.name}
+                      </h3>
+                      <p className="text-xs font-semibold text-slate-400">
+                        Scheduled at {formatClock(routine.time)}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onReset(routine.id)}
+                      className="rounded-full bg-lavender px-4 py-2 text-xs font-bold text-active hover:bg-[#e4ddff] transition shrink-0"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
       <EmergencySection onOpenModal={onOpenEmergency} />
@@ -665,12 +784,14 @@ function RoutineCard({
   onModeChange,
   onFieldChange,
   onTrigger,
+  onReset,
   onSave,
 }: {
   routine: Routine;
   onModeChange: (id: string, mode: ViewMode) => void;
   onFieldChange: <K extends keyof Routine>(id: string, key: K, value: Routine[K]) => void;
   onTrigger: (id: string) => void;
+  onReset: (id: string) => void;
   onSave: (id: string) => void;
 }) {
   const isCompleted = routine.status === "Completed";
@@ -806,6 +927,16 @@ function RoutineCard({
               disabled={isRunning}
             />
           </div>
+          {isRunning ? (
+            <button
+              type="button"
+              onClick={() => onReset(routine.id)}
+              className="inline-flex w-full min-h-[52px] items-center justify-center gap-2 rounded-[18px] border-2 border-red-200 bg-red-50 text-base font-bold text-red-600 transition hover:bg-red-100"
+            >
+              <X className="h-5 w-5" />
+              Stop &amp; Reset to Pending
+            </button>
+          ) : null}
         </div>
       ) : (
         <div className="mt-6 space-y-6">
@@ -825,6 +956,16 @@ function RoutineCard({
             disabled={isRunning}
             fullWidth
           />
+          {isRunning ? (
+            <button
+              type="button"
+              onClick={() => onReset(routine.id)}
+              className="inline-flex w-full min-h-[52px] items-center justify-center gap-2 rounded-[18px] border-2 border-red-200 bg-red-50 text-base font-bold text-red-600 transition hover:bg-red-100"
+            >
+              <X className="h-5 w-5" />
+              Stop &amp; Reset to Pending
+            </button>
+          ) : null}
         </div>
       )}
     </article>
@@ -1012,6 +1153,276 @@ function EmergencySection({ onOpenModal }: { onOpenModal: () => void }) {
         <ShieldAlert className="h-5 w-5" />
         Send Emergency Alert
       </button>
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared skeleton primitives
+// ─────────────────────────────────────────────────────────────────────────────
+function Sk({ className }: { className?: string }) {
+  return <div className={`animate-pulse rounded-[14px] bg-slate-200 ${className ?? ""}`} />;
+}
+
+function SkCard({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div className={`card-shell p-5 sm:p-6 ${className ?? ""}`}>
+      {children}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Home tab skeleton — mirrors StatusCard, SafetyMapCard, CompletedTasksCard
+// ─────────────────────────────────────────────────────────────────────────────
+function SkeletonHome() {
+  return (
+    <>
+      {/* Heading */}
+      <section className="space-y-3">
+        <Sk className="h-4 w-20" />
+        <Sk className="h-10 w-72 rounded-[18px]" />
+        <Sk className="h-5 w-96" />
+      </section>
+
+      {/* StatusCard */}
+      <SkCard>
+        <div className="flex items-center gap-5">
+          <Sk className="h-20 w-20 shrink-0 rounded-full" />
+          <div className="flex-1 space-y-3">
+            <Sk className="h-8 w-56" />
+            <Sk className="h-5 w-40" />
+          </div>
+          <Sk className="h-8 w-24 rounded-full" />
+        </div>
+        <div className="mt-6 grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="info-box space-y-3">
+              <Sk className="h-9 w-9 rounded-full" />
+              <Sk className="h-4 w-20" />
+              <Sk className="h-6 w-28" />
+            </div>
+          ))}
+        </div>
+      </SkCard>
+
+      {/* SafetyMapCard + TrackerAlertsCard */}
+      <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+        <SkCard>
+          <Sk className="h-7 w-40" />
+          <Sk className="mt-2 h-5 w-64" />
+          <Sk className="mt-6 h-[220px] w-full rounded-[20px]" />
+          <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            <Sk className="h-20 rounded-[20px]" />
+            <Sk className="h-20 rounded-[20px]" />
+          </div>
+        </SkCard>
+        <SkCard>
+          <Sk className="h-7 w-40" />
+          <div className="mt-5 space-y-3">
+            {[1, 2, 3].map((i) => (
+              <Sk key={i} className="h-16 rounded-[18px]" />
+            ))}
+          </div>
+        </SkCard>
+      </section>
+
+      {/* CompletedTasksCard + UpcomingTaskCard */}
+      <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
+        <SkCard>
+          <Sk className="h-7 w-44" />
+          <div className="mt-5 space-y-3">
+            {[1, 2, 3].map((i) => (
+              <Sk key={i} className="h-14 rounded-[18px]" />
+            ))}
+          </div>
+        </SkCard>
+        <SkCard>
+          <Sk className="h-7 w-44" />
+          <div className="mt-5 space-y-3">
+            <Sk className="h-5 w-52" />
+            <Sk className="h-12 w-36 rounded-[18px]" />
+          </div>
+        </SkCard>
+      </section>
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Manage tab skeleton — mirrors TagStatusCard, ActivityFeedCard, RoutineCards
+// ─────────────────────────────────────────────────────────────────────────────
+function SkeletonManage() {
+  return (
+    <section className="space-y-6">
+      {/* Page heading */}
+      <SkCard>
+        <Sk className="h-4 w-16" />
+        <Sk className="mt-2 h-9 w-72 rounded-[18px]" />
+        <Sk className="mt-3 h-5 w-full max-w-xl" />
+      </SkCard>
+
+      {/* BLE Tags + Activity Feed */}
+      <section className="grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
+        <SkCard>
+          <Sk className="h-7 w-40" />
+          <Sk className="mt-2 h-5 w-64" />
+          <Sk className="mt-6 h-28 w-full rounded-[20px]" />
+          <div className="mt-6 space-y-3">
+            {[1, 2].map((i) => (
+              <Sk key={i} className="h-20 rounded-[20px]" />
+            ))}
+          </div>
+        </SkCard>
+        <SkCard>
+          <Sk className="h-7 w-40" />
+          <div className="mt-5 space-y-3">
+            {[1, 2, 3, 4].map((i) => (
+              <Sk key={i} className="h-16 rounded-[18px]" />
+            ))}
+          </div>
+        </SkCard>
+      </section>
+
+      {/* Routine cards */}
+      <section className="space-y-5">
+        <div className="flex items-end justify-between gap-4">
+          <Sk className="h-8 w-52 rounded-[18px]" />
+          <Sk className="h-5 w-20" />
+        </div>
+        <div className="space-y-6">
+          {[1, 2, 3].map((i) => (
+            <SkCard key={i}>
+              <div className="flex flex-wrap items-center gap-3">
+                <Sk className="h-8 w-24 rounded-full" />
+                <Sk className="h-8 w-20 rounded-full" />
+              </div>
+              <div className="mt-6 flex items-center justify-between gap-4">
+                <Sk className="h-6 w-48" />
+                <Sk className="h-6 w-20" />
+              </div>
+              <Sk className="mt-5 h-14 w-full rounded-[18px]" />
+            </SkCard>
+          ))}
+        </div>
+      </section>
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Demo Simulation Panel — controls to simulate Geofence breaches and heart rate alerts
+// ─────────────────────────────────────────────────────────────────────────────
+function SimulationPanel({
+  elder,
+  onSimulateLocation,
+  onSimulateHeartRate,
+  onResetSimulation,
+}: {
+  elder: any;
+  onSimulateLocation: (status: "in_home" | "out_of_home") => Promise<void>;
+  onSimulateHeartRate: (bpm: number, label: "Normal" | "High" | "Low") => Promise<void>;
+  onResetSimulation: () => Promise<void>;
+}) {
+  const isOverride = elder.vitals?.isOverride === true;
+  const currentBpm = elder.vitals?.heartRateBpm ?? 72;
+
+  return (
+    <section className="card-shell p-5 sm:p-6 border-2 border-dashed border-active/40 bg-lavender/40 space-y-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-2xl font-black text-slate-900 flex items-center gap-2">
+            <span>🎮</span> Demo Simulation Panel
+          </h2>
+          <p className="text-sm font-semibold text-slate-500 mt-1">
+            Use these controls during pitching to simulate real-time patient alerts and vitals warnings.
+          </p>
+        </div>
+        {isOverride && (
+          <button
+            type="button"
+            onClick={() => void onResetSimulation()}
+            className="rounded-full bg-active text-white px-4 py-2 text-xs font-bold shadow-sm hover:bg-[#7a5df0] transition shrink-0"
+          >
+            Reset Override
+          </button>
+        )}
+      </div>
+
+      <div className="grid gap-6 md:grid-cols-2 pt-2">
+        {/* Location Status */}
+        <div className="space-y-3">
+          <p className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
+            Geofence zone (Location)
+          </p>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => void onSimulateLocation("in_home")}
+              className={`flex-1 py-3 px-4 rounded-[18px] font-bold text-sm transition ${
+                elder.status === "in_home"
+                  ? "bg-emerald-600 text-white shadow-sm"
+                  : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50"
+              }`}
+            >
+              🏠 In Home (Safe)
+            </button>
+            <button
+              type="button"
+              onClick={() => void onSimulateLocation("out_of_home")}
+              className={`flex-1 py-3 px-4 rounded-[18px] font-bold text-sm transition ${
+                elder.status !== "in_home"
+                  ? "bg-rose-600 text-white shadow-sm"
+                  : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50"
+              }`}
+            >
+              🚶 Wander Alert
+            </button>
+          </div>
+        </div>
+
+        {/* Heart Rate Vitals */}
+        <div className="space-y-3">
+          <p className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
+            Vitals Status (Heart Rate - bpm)
+          </p>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => void onSimulateHeartRate(72, "Normal")}
+              className={`flex-1 py-3 px-2 rounded-[18px] font-bold text-sm transition ${
+                isOverride && currentBpm === 72
+                  ? "bg-emerald-600 text-white shadow-sm"
+                  : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50"
+              }`}
+            >
+              🟢 72 (Normal)
+            </button>
+            <button
+              type="button"
+              onClick={() => void onSimulateHeartRate(120, "High")}
+              className={`flex-1 py-3 px-2 rounded-[18px] font-bold text-sm transition ${
+                isOverride && currentBpm === 120
+                  ? "bg-rose-600 text-white shadow-sm"
+                  : "bg-white text-rose-700 border border-rose-200 hover:bg-rose-50"
+              }`}
+            >
+              🔴 120 (High)
+            </button>
+            <button
+              type="button"
+              onClick={() => void onSimulateHeartRate(45, "Low")}
+              className={`flex-1 py-3 px-2 rounded-[18px] font-bold text-sm transition ${
+                isOverride && currentBpm === 45
+                  ? "bg-blue-600 text-white shadow-sm"
+                  : "bg-white text-blue-700 border border-blue-200 hover:bg-blue-50"
+              }`}
+            >
+              🔵 45 (Low)
+            </button>
+          </div>
+        </div>
+      </div>
     </section>
   );
 }

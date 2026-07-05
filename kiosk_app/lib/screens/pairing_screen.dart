@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../theme/app_colors.dart';
@@ -44,38 +45,42 @@ class _PairingScreenState extends State<PairingScreen> {
 
     final pinRef = _dbRef.child('pairing_codes/$pin');
 
-    // 2. Publish lên Firebase node pairing_codes
-    pinRef.set({
-      'familyId': '',
-      'createdAt': ServerValue.timestamp,
-    });
+    try {
+      // 2. Publish lên Firebase node pairing_codes
+      pinRef.set({
+        'familyId': '',
+        'createdAt': ServerValue.timestamp,
+      });
 
-    // 3. Lắng nghe cập nhật khi Caregiver nhập mã này trên web
-    _pairingSub = pinRef.onValue.listen((event) async {
-      final value = event.snapshot.value;
-      if (value is Map) {
-        final familyId = value['familyId'];
-        if (familyId != null && familyId.toString().trim().isNotEmpty) {
-          // Lưu familyId động vào máy
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('family_id', familyId.toString());
+      // 3. Lắng nghe cập nhật khi Caregiver nhập mã này trên web
+      _pairingSub = pinRef.onValue.listen((event) async {
+        final value = event.snapshot.value;
+        if (value is Map) {
+          final familyId = value['familyId'];
+          if (familyId != null && familyId.toString().trim().isNotEmpty) {
+            // Lưu familyId động vào máy
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString('family_id', familyId.toString());
 
-          // Xóa mã PIN trên Firebase để giải phóng tài nguyên
-          await pinRef.remove();
+            // Xóa mã PIN trên Firebase để giải phóng tài nguyên
+            await pinRef.remove();
 
-          // Điều hướng sang Kiosk Home Page
-          if (mounted) {
-            Navigator.of(context).pushReplacementNamed('/home', arguments: familyId.toString());
+            // Điều hướng sang Kiosk Home Page
+            if (mounted) {
+              Navigator.of(context).pushReplacementNamed('/home', arguments: familyId.toString());
+            }
           }
         }
-      }
-    });
+      });
+    } catch (err) {
+      debugPrint('Firebase pairing setup error: $err');
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final formattedPin = _pairingPin.length == 6
-        ? '${_pairingPin.substring(0, 3)} ${_pairingPin.substring(3)}'
+        ? _pairingPin
         : '...';
 
     return Scaffold(
@@ -132,20 +137,35 @@ class _PairingScreenState extends State<PairingScreen> {
                 // Hiển thị mã PIN
                 _isLoading
                     ? const CircularProgressIndicator()
-                    : Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 40, vertical: 20),
-                        decoration: BoxDecoration(
-                          color: AppColors.lavender,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          formattedPin,
-                          style: const TextStyle(
-                            fontSize: 52,
-                            fontWeight: FontWeight.w900,
-                            color: AppColors.brand,
-                            letterSpacing: 2,
+                    : MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: GestureDetector(
+                          onTap: () {
+                            Clipboard.setData(ClipboardData(text: _pairingPin));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('PIN $_pairingPin copied to clipboard!'),
+                                duration: const Duration(seconds: 2),
+                                behavior: SnackBarBehavior.floating,
+                              ),
+                            );
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 40, vertical: 20),
+                            decoration: BoxDecoration(
+                              color: AppColors.lavender,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: SelectableText(
+                              formattedPin,
+                              style: const TextStyle(
+                                fontSize: 52,
+                                fontWeight: FontWeight.w900,
+                                color: AppColors.brand,
+                                letterSpacing: 2,
+                              ),
+                            ),
                           ),
                         ),
                       ),

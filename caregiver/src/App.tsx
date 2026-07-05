@@ -20,6 +20,7 @@ import {
   ShieldAlert,
   UserRound,
   Users,
+  Sparkles,
 } from "lucide-react";
 import type { User } from "firebase/auth";
 
@@ -27,6 +28,7 @@ import { BottomNavigation, ConfirmationModal, Header, Toast } from "./components
 import {
   demoFamilyId,
   getUserProfile,
+  linkKioskByPin,
   signInCaregiver,
   signOutCaregiver,
   signUpCaregiver,
@@ -36,6 +38,7 @@ import {
   transactFamilyTask,
   updateFamilyPath,
   updateUserProfile,
+  pushFamilyEvent,
 } from "./firebase";
 import { HomeScreen, ManagementScreen } from "./screens/HomeScreen";
 import type {
@@ -71,6 +74,34 @@ const defaultProfile = {
   role: "Family caregiver",
   email: "hy@example.com",
 };
+
+function playAlertSound() {
+  try {
+    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    let time = audioCtx.currentTime;
+    // Play 4 alternating tone beeps (emergency buzzer)
+    for (let i = 0; i < 4; i++) {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(i % 2 === 0 ? 880 : 660, time); // A5 and E5 alternating tones
+      
+      gain.gain.setValueAtTime(0, time);
+      gain.gain.linearRampToValueAtTime(0.4, time + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.22);
+      
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(time);
+      osc.stop(time + 0.25);
+      
+      time += 0.3;
+    }
+  } catch (err) {
+    console.error("Failed to play synthesized alert sound:", err);
+  }
+}
 
 const defaultBleTags: BleTag[] = [
   {
@@ -147,6 +178,7 @@ export default function App() {
     safeZoneStatus: "inside",
   });
   const [routines, setRoutines] = useState<Routine[]>([]);
+  const [dataLoading, setDataLoading] = useState(true);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
@@ -161,7 +193,8 @@ export default function App() {
   const [profileRole, setProfileRole] = useState(defaultProfile.role);
   const [profileEmail, setProfileEmail] = useState(defaultProfile.email);
   const [bleTags, setBleTags] = useState<BleTag[]>(defaultBleTags);
-  const [feedItems, setFeedItems] = useState<AlertFeedItem[]>(() => buildInitialFeed());
+  const [feedItems, setFeedItems] = useState<AlertFeedItem[]>([]);
+  const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null);
 
   const lastPersistedSettingsRef = useRef(JSON.stringify(initialDemoSettings));
 
@@ -187,6 +220,7 @@ export default function App() {
         setProfileEmail(defaultProfile.email);
         setDemoSettings(initialDemoSettings);
         lastPersistedSettingsRef.current = JSON.stringify(initialDemoSettings);
+        setOnboardingCompleted(true);
         setSettingsReady(true);
         setAuthLoading(false);
         return;
@@ -224,9 +258,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let isFirstElder = true;
+    let lastVitalsStatus = "Normal";
     const unsubElder = subscribeToFamilyPath(familyId, "elder", (snapshot) => {
       const value = snapshot.val();
-      if (value) setElder(value);
+      if (value) {
+        setElder(value);
+        const vitalsStatus = value.vitals?.status || "Normal";
+        if (vitalsStatus !== "Normal" && vitalsStatus !== lastVitalsStatus && !isFirstElder) {
+          playAlertSound();
+        }
+        lastVitalsStatus = vitalsStatus;
+      }
+      isFirstElder = false;
     });
 
     const unsubKiosk = subscribeToFamilyPath(familyId, "kiosk", (snapshot) => {
@@ -234,15 +278,22 @@ export default function App() {
       if (value) setKiosk((current: any) => ({ ...current, ...value }));
     });
 
+    let isFirstTracker = true;
     const unsubTracker = subscribeToFamilyPath(familyId, "tracker_alert", (snapshot) => {
       const value = snapshot.val();
-      if (value) setTrackerAlert(value);
+      if (value) {
+        setTrackerAlert(value);
+        if (value.is_active && !isFirstTracker) {
+          playAlertSound();
+        }
+      }
+      isFirstTracker = false;
     });
 
     const unsubBleTags = subscribeToFamilyPath(familyId, "ble_tags", (snapshot) => {
       const data = snapshot.val();
       if (!data) {
-        setBleTags(defaultBleTags);
+        setBleTags(familyId === demoFamilyId ? defaultBleTags : []);
         return;
       }
 
@@ -292,6 +343,38 @@ export default function App() {
           return existing ? { ...item, mode: existing.mode } : item;
         }),
       );
+      setDataLoading(false);
+    });
+
+    const unsubEvents = subscribeToFamilyPath(familyId, "events", (snapshot) => {
+      const data = snapshot.val();
+      if (!data) {
+        setFeedItems([]);
+        return;
+      }
+      const list = Object.entries(data).map(([id, val]: [string, any]) => ({
+        id,
+        level:
+          val.type === "emergency"
+            ? "danger"
+            : val.type === "complete"
+              ? "success"
+              : val.type === "tracker_alert"
+                ? "warning"
+                : "info",
+        title: val.title || "Activity Log",
+        message: val.message || "",
+        timestampLabel: formatRelativeTime(val.timestamp || Date.now()),
+        timestamp: val.timestamp || 0,
+      }));
+      // Sort descending by timestamp
+      list.sort((a, b) => b.timestamp - a.timestamp);
+      // Keep only last 10 events
+      setFeedItems(list.slice(0, 10));
+    });
+
+    const unsubOnboarding = subscribeToFamilyPath(familyId, "onboarding_completed", (snapshot) => {
+      setOnboardingCompleted(!!snapshot.val());
     });
 
     return () => {
@@ -300,6 +383,8 @@ export default function App() {
       unsubTracker();
       unsubBleTags();
       unsubTasks();
+      unsubEvents();
+      unsubOnboarding();
     };
   }, [familyId]);
 
@@ -352,10 +437,6 @@ export default function App() {
     return nextToday || sorted[0] || null;
   }, [routines]);
 
-  useEffect(() => {
-    setFeedItems((current) => buildAlertFeed({ elder, kiosk, trackerAlert, routines, bleTags }, current));
-  }, [bleTags, elder, kiosk, routines, trackerAlert]);
-
   const linkedFamilyMembers = caregiverProfile?.linkedFamilyMembers || [
     "Hy Nguyen",
     "Minh Nguyen",
@@ -369,15 +450,22 @@ export default function App() {
     });
   }
 
-  function pushFeedItem(item: Omit<AlertFeedItem, "id" | "timestampLabel">) {
-    setFeedItems((current) => [
-      {
-        ...item,
-        id: `feed_${Date.now()}`,
-        timestampLabel: "Just now",
-      },
-      ...current,
-    ]);
+  async function pushFeedItem(item: Omit<AlertFeedItem, "id" | "timestampLabel">) {
+    try {
+      let type: "trigger" | "complete" | "emergency" | "tracker_alert" = "trigger";
+      if (item.level === "danger") type = "emergency";
+      else if (item.level === "success") type = "complete";
+      else if (item.level === "warning") type = "tracker_alert";
+
+      await pushFamilyEvent(familyId, {
+        type,
+        title: item.title,
+        message: item.message,
+        by: caregiverProfile?.name || authUser?.displayName || "Caregiver",
+      });
+    } catch (error) {
+      console.error("Failed to push event:", error);
+    }
   }
 
   async function handleTrigger(id: string) {
@@ -498,6 +586,44 @@ export default function App() {
     }
   }
 
+  async function handleReset(id: string) {
+    const routine = routines.find((item) => item.id === id);
+    if (!routine) return;
+    try {
+      await updateFamilyPath(familyId, `tasks/${id}`, {
+        status: "Pending",
+        is_triggered: false,
+        triggeredAt: null,
+        spokenAt: null,
+        completedAt: null,
+        triggerMode: null,
+        updatedAt: Date.now(),
+      });
+      pushToast(`"${routine.name}" reset to Pending.`);
+    } catch (error) {
+      console.error(error);
+      pushToast("Failed to reset routine.");
+    }
+  }
+
+  async function handleClearCompleted() {
+    const completed = routines.filter((item) => item.status === "Completed");
+    if (completed.length === 0) return;
+    const confirm = window.confirm(`Are you sure you want to permanently delete all ${completed.length} completed routines?`);
+    if (!confirm) return;
+    try {
+      const updates: Record<string, any> = {};
+      completed.forEach((routine) => {
+        updates[`tasks/${routine.id}`] = null;
+      });
+      await updateFamilyPath(familyId, "", updates);
+      pushToast(`Deleted ${completed.length} completed routines.`);
+    } catch (error) {
+      console.error(error);
+      pushToast("Failed to clear completed routines.");
+    }
+  }
+
   async function handleSendEmergency() {
     setShowEmergencyModal(false);
 
@@ -505,7 +631,7 @@ export default function App() {
       await updateFamilyPath(familyId, "emergency", {
         is_triggered: true,
         triggeredAt: Date.now(),
-        message: "Ngoại ơi, con đang gọi. Xin hãy nhìn vào màn hình.",
+        message: "Emergency! Your caregiver is calling. Please look at the screen.",
       });
       pushToast("Emergency services contacted.");
       pushFeedItem({
@@ -734,17 +860,144 @@ export default function App() {
       });
   }
 
+  async function handleSimulateLocation(status: "in_home" | "out_of_home") {
+    try {
+      const isOutside = status === "out_of_home";
+      await updateFamilyPath(familyId, "elder", {
+        status: status,
+        locationLabel: isOutside ? "Outside Safe Zone" : "In Home",
+        lastSeenAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      await updateFamilyPath(familyId, "tracker_alert", {
+        is_active: isOutside,
+        type: isOutside ? "out_of_safe_zone" : null,
+        message: isOutside
+          ? "Wearable tracker detected elder outside the geofence!"
+          : "Elder is safe inside the home zone.",
+        severity: isOutside ? "danger" : "normal",
+        safeZoneStatus: isOutside ? "outside" : "inside",
+        source: "BLE tracker",
+        updatedAt: Date.now(),
+      });
+
+      await pushFeedItem({
+        level: isOutside ? "danger" : "success",
+        title: isOutside ? "Geofence Breach" : "Elder Returned Home",
+        message: isOutside
+          ? "Warning: Wearable tracker detected elder crossed the geofence zone!"
+          : "Elder is safe inside the home zone.",
+      });
+
+      pushToast(`Simulated location set to: ${isOutside ? "Away" : "Home"}`);
+    } catch (err) {
+      console.error(err);
+      pushToast("Failed to simulate location.");
+    }
+  }
+
+  async function handleSimulateHeartRate(bpm: number, label: "Normal" | "High" | "Low") {
+    try {
+      const isNormal = label === "Normal";
+      const status = isNormal ? "Normal" : label === "High" ? "Dangerously High" : "Dangerously Low";
+
+      await updateFamilyPath(familyId, "elder/vitals", {
+        heartRateBpm: bpm,
+        status: status,
+        isOverride: true,
+        updatedAt: Date.now(),
+      });
+
+      await pushFeedItem({
+        level: isNormal ? "success" : "danger",
+        title: isNormal ? "Vitals Normal" : "Vitals Warning",
+        message: isNormal
+          ? `Heart rate normalized at ${bpm} bpm.`
+          : `Alert: Heart rate detected at ${bpm} bpm (${status})!`,
+      });
+
+      pushToast(`Simulated heart rate: ${bpm} BPM (${label})`);
+    } catch (err) {
+      console.error(err);
+      pushToast("Failed to simulate heart rate.");
+    }
+  }
+
+  async function handleResetSimulation() {
+    try {
+      await updateFamilyPath(familyId, "elder/vitals", {
+        isOverride: false,
+        updatedAt: Date.now(),
+      });
+      await handleSimulateLocation("in_home");
+      pushToast("Simulation reset to automatic Kiosk mode.");
+    } catch (err) {
+      console.error(err);
+      pushToast("Failed to reset simulation.");
+    }
+  }
+
+  async function handleUpdateCaregiverProfileName(newName: string) {
+    setProfileName(newName);
+    if (authUser) {
+      try {
+        const { ref: dbRef, update: dbUpdate } = await import("firebase/database");
+        const userProfileRef = dbRef(database, `users/${authUser.uid}`);
+        await dbUpdate(userProfileRef, {
+          name: newName,
+        });
+      } catch (err) {
+        console.error("Failed to update user profile name in DB:", err);
+      }
+    }
+  }
+
+  async function handleRerunOnboarding() {
+    try {
+      setOnboardingCompleted(false);
+      await updateFamilyPath(familyId, "onboarding_completed", {
+        onboarding_completed: false,
+      });
+      await updateFamilyPath(familyId, "kiosk", {
+        online: false,
+        updatedAt: Date.now(),
+      });
+      pushToast("Onboarding setup wizard activated. Kiosk will reset to pairing screen.");
+    } catch (err) {
+      console.error(err);
+      pushToast("Setup wizard activated.");
+    }
+  }
+
   function renderMainContent() {
+    const showOnboarding = authUser !== null && onboardingCompleted === false;
+
+    if (showOnboarding) {
+      return (
+        <div className="mx-auto w-full max-w-[600px] py-6">
+          <OnboardingWizard
+            familyId={familyId}
+            pushToast={pushToast}
+            caregiverName={profileName}
+            onComplete={() => {}}
+          />
+        </div>
+      );
+    }
+
     if (activeTab === "history") {
       return (
         <ManagementScreen
           routines={routines}
           bleTags={bleTags}
           feedItems={feedItems}
+          dataLoading={dataLoading}
           onAddNew={() => void handleAddNew()}
           onModeChange={handleModeChange}
           onFieldChange={handleFieldChange}
           onTrigger={(id) => void handleTrigger(id)}
+          onReset={(id) => void handleReset(id)}
           onSave={(id) => void handleSave(id)}
           onOpenEmergency={() => setShowEmergencyModal(true)}
           onToggleTag={(id) => void handleToggleTag(id)}
@@ -753,6 +1006,7 @@ export default function App() {
           onDeleteTag={(id) => void handleDeleteTag(id)}
           onConnectTag={(id) => void handleConnectTag(id)}
           onDisconnectTag={(id) => void handleDisconnectTag(id)}
+          onClearCompleted={() => void handleClearCompleted()}
         />
       );
     }
@@ -770,10 +1024,13 @@ export default function App() {
           linkedFamilyMembers={linkedFamilyMembers}
           kioskName={kiosk.name || "Living Room Kiosk"}
           kioskStatus={kiosk.online ? "Demo connected" : "Offline in demo"}
+          familyId={familyId}
           onOpenPage={setSettingsPage}
           onBack={() => setSettingsPage("root")}
           onUpdateSettings={setDemoSettings}
           onRequestLogout={handleLogoutRequest}
+          onUpdateCaregiverName={handleUpdateCaregiverProfileName}
+          onRerunOnboarding={handleRerunOnboarding}
           pushToast={pushToast}
         />
       );
@@ -786,9 +1043,15 @@ export default function App() {
         trackerAlert={trackerAlert}
         completedRoutines={completedRoutines}
         upcomingRoutine={upcomingRoutine}
+        dataLoading={dataLoading}
+        onSimulateLocation={handleSimulateLocation}
+        onSimulateHeartRate={handleSimulateHeartRate}
+        onResetSimulation={handleResetSimulation}
       />
     );
   }
+
+  const showOnboarding = authUser !== null && onboardingCompleted === false;
 
   return (
     <div className="min-h-screen bg-shell text-slate-900">
@@ -797,7 +1060,7 @@ export default function App() {
         <main className="space-y-8">{renderMainContent()}</main>
       </div>
 
-      <BottomNavigation activeTab={activeTab} onChange={handleBottomNav} />
+      {!showOnboarding ? <BottomNavigation activeTab={activeTab} onChange={handleBottomNav} /> : null}
 
       {toast ? <Toast message={toast.message} onDismiss={() => setToast(null)} /> : null}
 
@@ -835,10 +1098,13 @@ function SettingsScreen({
   linkedFamilyMembers,
   kioskName,
   kioskStatus,
+  familyId,
   onOpenPage,
   onBack,
   onUpdateSettings,
   onRequestLogout,
+  onUpdateCaregiverName,
+  onRerunOnboarding,
   pushToast,
 }: {
   page: SettingsPage;
@@ -851,10 +1117,13 @@ function SettingsScreen({
   linkedFamilyMembers: string[];
   kioskName: string;
   kioskStatus: string;
+  familyId: string;
   onOpenPage: (page: SettingsPage) => void;
   onBack: () => void;
   onUpdateSettings: Dispatch<SetStateAction<DemoSettingsState>>;
   onRequestLogout: () => void;
+  onUpdateCaregiverName: (name: string) => Promise<void>;
+  onRerunOnboarding: () => Promise<void>;
   pushToast: (message: string) => void;
 }) {
   if (page !== "root") {
@@ -867,8 +1136,10 @@ function SettingsScreen({
         profileRole={profileRole}
         profileEmail={profileEmail}
         linkedFamilyMembers={linkedFamilyMembers}
+        familyId={familyId}
         onBack={onBack}
         onUpdateSettings={onUpdateSettings}
+        onUpdateCaregiverName={onUpdateCaregiverName}
         pushToast={pushToast}
       />
     );
@@ -945,13 +1216,13 @@ function SettingsScreen({
               icon={MonitorSmartphone}
               title="Kiosk display name"
               subtitle={kioskName}
-              onClick={() => pushToast("Renaming the kiosk is not available in demo mode.")}
+              onClick={() => pushToast("Kiosk renaming coming soon.")}
             />
             <SettingsTile
               icon={MonitorSmartphone}
               title="Pair new kiosk"
-              subtitle="Connect another in-home screen"
-              onClick={() => pushToast("Kiosk pairing is not available in demo mode.")}
+              subtitle="Enter the 6-digit code shown on the TV/tablet"
+              onClick={() => onOpenPage("kiosk-pairing")}
             />
             <SettingsTile
               icon={CheckCircle2}
@@ -965,7 +1236,7 @@ function SettingsScreen({
             <SettingsTile
               icon={UserRound}
               title="Elderly profile"
-              subtitle="Demo care recipient profile"
+              subtitle="Edit elder and caregiver names"
               onClick={() => onOpenPage("elderly-profile")}
             />
             <SettingsTile
@@ -989,8 +1260,17 @@ function SettingsScreen({
             <SettingsTile
               icon={MapPinned}
               title="Geofence settings"
-              subtitle="Home safe zone demo controls"
+              subtitle="Home safe zone configuration"
               onClick={() => onOpenPage("geofence-settings")}
+            />
+          </SettingsSection>
+
+          <SettingsSection title="Demo controls">
+            <SettingsTile
+              icon={Sparkles}
+              title="Re-run Setup Wizard"
+              subtitle="Show the 3-step kiosk & profile onboarding guide"
+              onClick={onRerunOnboarding}
             />
           </SettingsSection>
         </div>
@@ -1033,13 +1313,13 @@ function SettingsScreen({
             <SettingsTile
               icon={Bell}
               title="Contact support"
-              subtitle="Demo support page"
+              subtitle="Get help with the app"
               onClick={() => onOpenPage("contact-support")}
             />
             <SettingsTile
               icon={Info}
               title="About Remember.For.Me"
-              subtitle="Version 1.0.0-demo"
+              subtitle="Version 1.0.0"
               onClick={() => onOpenPage("about")}
             />
             <SettingsTile
@@ -1069,8 +1349,10 @@ function SettingsDetailPage({
   profileRole,
   profileEmail,
   linkedFamilyMembers,
+  familyId,
   onBack,
   onUpdateSettings,
+  onUpdateCaregiverName,
   pushToast,
 }: {
   page: SettingsPage;
@@ -1080,8 +1362,10 @@ function SettingsDetailPage({
   profileRole: string;
   profileEmail: string;
   linkedFamilyMembers: string[];
+  familyId: string;
   onBack: () => void;
   onUpdateSettings: Dispatch<SetStateAction<DemoSettingsState>>;
+  onUpdateCaregiverName: (name: string) => Promise<void>;
   pushToast: (message: string) => void;
 }) {
   const simplePages: Record<
@@ -1132,24 +1416,26 @@ function SettingsDetailPage({
       subtitle: "Living Room Kiosk",
       body: (
         <p className="text-lg font-medium leading-8 text-slate-700">
-          The caregiver app is linked to a demo kiosk stream. Real kiosk pairing,
-          presence verification, and device reassignment can plug in here later.
+          The Kiosk app is linked to this caregiver account via a 6-digit PIN.
+          Use <strong>Pair new kiosk</strong> in the Kiosk section above to connect
+          a new TV or tablet screen.
         </p>
       ),
     },
     "elderly-profile": {
       title: "Elderly profile",
-      subtitle: "Demo care recipient details",
+      subtitle: "Names synced live to the Kiosk screen",
       body: (
-        <p className="text-lg font-medium leading-8 text-slate-700">
-          This page will later show personal care preferences, mobility notes,
-          reminder tone preferences, and daily routines shared with the kiosk.
-        </p>
+        <ElderlyProfileCard
+          familyId={familyId}
+          pushToast={pushToast}
+          onUpdateCaregiverName={onUpdateCaregiverName}
+        />
       ),
     },
     "emergency-contacts": {
       title: "Emergency contacts",
-      subtitle: "Demo contact list",
+      subtitle: "Family emergency contact list",
       body: (
         <div className="space-y-3">
           {["Anna Nguyen - Daughter", "Mr. Minh Tran - Neighbor"].map((contact) => (
@@ -1162,82 +1448,84 @@ function SettingsDetailPage({
     },
     "reminder-defaults": {
       title: "Reminder defaults",
-      subtitle: "Demo reminder preferences",
+      subtitle: "Medication and routine preferences",
       body: (
         <p className="text-lg font-medium leading-8 text-slate-700">
           Default reminder timing, follow-up intervals, and voice prompt behavior
-          will eventually be configured here for both caregiver and kiosk surfaces.
+          will be configured here for both caregiver and kiosk surfaces.
         </p>
       ),
     },
     "tracker-settings": {
       title: "Tracker settings",
-      subtitle: "Demo wearable preferences",
+      subtitle: "Wearable and movement alerts",
       body: (
         <p className="text-lg font-medium leading-8 text-slate-700">
-          Tracker settings will later control wearable syncing, inactivity thresholds,
-          and care alerts. No real hardware configuration is active in this demo.
+          Tracker settings control wearable syncing, inactivity thresholds,
+          and safety alerts. Real hardware integration is required for live tracking.
         </p>
       ),
     },
     "geofence-settings": {
       title: "Geofence settings",
-      subtitle: "Demo safe zone preferences",
+      subtitle: "Home safe zone configuration",
       body: (
         <p className="text-lg font-medium leading-8 text-slate-700">
-          Safe zone boundaries and exit alerts are mocked in this prototype.
-          Location rules and maps will be powered by real services later.
+          Safe zone boundaries and exit alerts will be powered by GPS in a future update.
+          Use the BLE tags in Manage as a proximity alternative.
         </p>
       ),
     },
     "help-centre": {
       title: "Help Centre",
-      subtitle: "Demo support content",
+      subtitle: "Setup guidance and FAQs",
       body: (
         <p className="text-lg font-medium leading-8 text-slate-700">
-          This placeholder page can later contain onboarding help, caregiver FAQs,
-          device setup instructions, and kiosk troubleshooting guidance.
+          For setup help, kiosk pairing instructions, and troubleshooting,
+          contact the Remember.For.Me support team.
         </p>
       ),
     },
     "contact-support": {
       title: "Contact support",
-      subtitle: "Demo contact page",
+      subtitle: "Get help with the app",
       body: (
         <p className="text-lg font-medium leading-8 text-slate-700">
-          Support messaging is not connected in demo mode. In production, this page
-          would offer live chat, email, and issue reporting for caregivers.
+          Reach the support team via email at <strong>support@rememberforme.app</strong>.
+          We aim to respond within 24 hours.
         </p>
       ),
     },
     about: {
       title: "About Remember.For.Me",
-      subtitle: "Version 1.0.0-demo",
+      subtitle: "Version 1.0.0",
       body: (
         <p className="text-lg font-medium leading-8 text-slate-700">
-          Remember.For.Me is a caregiver plus home kiosk concept for elderly care.
-          This build is a demo prototype with real Firebase authentication and
-          family-scoped demo data wiring.
+          Remember.For.Me is an ambient care ecosystem connecting caregivers to
+          in-home kiosk screens, helping elderly family members stay on track
+          with daily routines through gentle voice reminders.
         </p>
       ),
     },
     privacy: {
       title: "Privacy Policy",
-      subtitle: "Demo placeholder",
+      subtitle: "How your data is protected",
       body: (
         <p className="text-lg font-medium leading-8 text-slate-700">
-          This is demo legal content only. A full privacy policy would explain how
-          caregiver, kiosk, and elderly care data are stored and protected.
+          All caregiver and care recipient data is stored securely in Firebase
+          and is only accessible to authenticated caregiver accounts linked to
+          the same family group.
         </p>
       ),
     },
     terms: {
       title: "Terms of Service",
-      subtitle: "Demo placeholder",
+      subtitle: "Usage agreement",
       body: (
         <p className="text-lg font-medium leading-8 text-slate-700">
-          This prototype page stands in for the final service terms. No real user
-          contract, payment flow, or backend agreement is active yet.
+          By using Remember.For.Me you agree to use the platform solely for
+          lawful eldercare purposes. No medical or emergency services are
+          guaranteed by this application.
         </p>
       ),
     },
@@ -1256,6 +1544,18 @@ function SettingsDetailPage({
           profileEmail={profileEmail}
           pushToast={pushToast}
         />
+      </SettingsDetailLayout>
+    );
+  }
+
+  if (page === "kiosk-pairing") {
+    return (
+      <SettingsDetailLayout
+        title="Pair New Kiosk"
+        subtitle="Enter the 6-digit code displayed on the TV or tablet screen"
+        onBack={onBack}
+      >
+        <KioskPairingCard familyId={familyId} pushToast={pushToast} />
       </SettingsDetailLayout>
     );
   }
@@ -1757,95 +2057,587 @@ function buildInitialFeed(): AlertFeedItem[] {
   ];
 }
 
-function buildAlertFeed(
-  {
-    elder,
-    kiosk,
-    trackerAlert,
-    routines,
-    bleTags,
-  }: {
-    elder: any;
-    kiosk: any;
-    trackerAlert: any;
-    routines: Routine[];
-    bleTags: BleTag[];
-  },
-  existing: AlertFeedItem[],
-) {
-  const computed: AlertFeedItem[] = [];
-  const kioskOnline =
-    kiosk.online && kiosk.lastHeartbeatAt && Date.now() - kiosk.lastHeartbeatAt < 30000;
 
-  computed.push({
-    id: "system_kiosk",
-    level: kioskOnline ? "success" : "warning",
-    title: kioskOnline ? "Kiosk connected" : "Kiosk heartbeat delayed",
-    message: kioskOnline
-      ? `${kiosk.name || "Living Room Kiosk"} is online and receiving reminders.`
-      : `${kiosk.name || "Living Room Kiosk"} has not reported a recent heartbeat.`,
-    timestampLabel: kiosk.lastHeartbeatAt ? formatRelativeTime(kiosk.lastHeartbeatAt) : "No heartbeat",
-  });
 
-  const unsafeTags = bleTags.filter((tag) => tag.status === "away");
-  if (unsafeTags.length > 0) {
-    unsafeTags.forEach((tag) => {
-      computed.push({
-        id: `tag_${tag.id}`,
-        level: "warning",
-        title: "BLE tag outside home range",
-        message: `${tag.name} is away from ${tag.location}.`,
-        timestampLabel: "Needs check",
-      });
-    });
-  } else {
-    computed.push({
-      id: "tag_safe",
-      level: "success",
-      title: "BLE tags in range",
-      message: "Wallet, keys, and pillbox are all near the home station.",
-      timestampLabel: "Current",
-    });
+// ---------------------------------------------------------------------------
+// KioskPairingCard — caregiver enters the 6-digit PIN shown on the Kiosk
+// ---------------------------------------------------------------------------
+function KioskPairingCard({
+  familyId,
+  pushToast,
+}: {
+  familyId: string;
+  pushToast: (msg: string) => void;
+}) {
+  const [pin, setPin] = useState("");
+  const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [errorMsg, setErrorMsg] = useState("");
+
+  async function handleLink() {
+    const cleaned = pin.replace(/\s/g, "");
+    if (cleaned.length !== 6 || !/^\d{6}$/.test(cleaned)) {
+      setErrorMsg("Please enter a valid 6-digit PIN.");
+      setStatus("error");
+      return;
+    }
+    setStatus("loading");
+    setErrorMsg("");
+    try {
+      const result = await linkKioskByPin(cleaned, familyId);
+      if (result === "ok") {
+        setStatus("success");
+        pushToast("Kiosk linked successfully! The TV screen will update automatically.");
+      } else if (result === "not_found") {
+        setErrorMsg("PIN not found. Make sure the Kiosk is showing this code and try again.");
+        setStatus("error");
+      } else {
+        setErrorMsg("This PIN has already been claimed by another session.");
+        setStatus("error");
+      }
+    } catch (err) {
+      console.error(err);
+      setErrorMsg("Connection error. Check your internet and try again.");
+      setStatus("error");
+    }
   }
 
-  const activeTracker =
-    trackerAlert.is_active === true ||
-    trackerAlert.is_active === "true" ||
-    trackerAlert.is_active === "True";
+  if (status === "success") {
+    return (
+      <div className="flex flex-col items-center gap-6 rounded-[24px] bg-emerald-50 px-6 py-10 text-center">
+        <span className="inline-flex h-20 w-20 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+          <CheckCircle2 className="h-10 w-10" />
+        </span>
+        <h3 className="text-2xl font-extrabold text-slate-900">Kiosk Linked!</h3>
+        <p className="max-w-sm text-base font-medium leading-7 text-slate-600">
+          The TV/tablet kiosk has been connected to this caregiver account. It will
+          now receive reminders and routine updates in real time.
+        </p>
+      </div>
+    );
+  }
 
-  computed.push({
-    id: "tracker_state",
-    level: activeTracker ? "danger" : elder.status === "in_home" ? "success" : "warning",
-    title: activeTracker ? "Tracker alert active" : "Safe zone monitoring",
-    message: activeTracker
-      ? trackerAlert.message || "The wearable tracker detected a safety issue."
-      : elder.status === "in_home"
-        ? "Care recipient is currently inside the configured home zone."
-        : "Care recipient appears outside the usual home zone.",
-    timestampLabel: trackerAlert.updatedAt
-      ? formatRelativeTime(Number(trackerAlert.updatedAt))
-      : elder.lastSeenAt
-        ? formatRelativeTime(Number(elder.lastSeenAt))
-        : "No recent data",
-  });
+  return (
+    <div className="space-y-5">
+      {/* Instruction card */}
+      <div className="rounded-[20px] bg-active/8 border border-active/20 px-5 py-5">
+        <p className="text-sm font-extrabold uppercase tracking-[0.2em] text-active">How to pair</p>
+        <ol className="mt-3 space-y-2 text-base font-medium leading-7 text-slate-700">
+          <li>1. Open the <strong>Remember.For.Me</strong> app on the TV or tablet.</li>
+          <li>2. Wait for the <strong>6-digit PIN</strong> to appear on screen.</li>
+          <li>3. Type that PIN below and tap <strong>Link Kiosk</strong>.</li>
+        </ol>
+      </div>
 
-  routines
-    .filter((routine) => routine.updatedAt)
-    .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
-    .slice(0, 2)
-    .forEach((routine) => {
-      computed.push({
-        id: `routine_${routine.id}`,
-        level:
-          routine.status === "Completed" ? "success" : routine.status === "Running" ? "info" : "info",
-        title: `Routine ${routine.status.toLowerCase()}`,
-        message: `${routine.name} is scheduled for ${formatClock(routine.time)} in the ${routine.period} window.`,
-        timestampLabel:
-          typeof routine.updatedAt === "number"
-            ? formatRelativeTime(routine.updatedAt)
-            : "Recently updated",
-      });
+      {/* PIN input */}
+      <div className="space-y-2">
+        <label className="block text-sm font-extrabold uppercase tracking-[0.18em] text-slate-500">
+          Kiosk PIN
+        </label>
+        <input
+          id="kiosk-pin-input"
+          type="text"
+          inputMode="numeric"
+          maxLength={6}
+          value={pin}
+          onChange={(e) => {
+            setPin(e.target.value.replace(/\D/g, "").slice(0, 6));
+            setStatus("idle");
+            setErrorMsg("");
+          }}
+          placeholder="e.g. 482 917"
+          className="h-16 w-full rounded-[18px] bg-lavender px-5 text-center text-2xl font-extrabold tracking-[0.3em] text-slate-800 outline-none placeholder:font-normal placeholder:tracking-normal placeholder:text-slate-400 focus:ring-2 focus:ring-active/40"
+        />
+        {errorMsg ? (
+          <p className="text-sm font-semibold text-red-500">{errorMsg}</p>
+        ) : null}
+      </div>
+
+      {/* Action button */}
+      <button
+        type="button"
+        id="link-kiosk-btn"
+        onClick={() => void handleLink()}
+        disabled={status === "loading" || pin.length < 6}
+        className="inline-flex min-h-[64px] w-full items-center justify-center gap-3 rounded-[20px] bg-active px-6 text-xl font-bold text-white transition hover:bg-[#7a5df0] disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {status === "loading" ? (
+          "Linking..."
+        ) : (
+          <>
+            <Link2 className="h-5 w-5" />
+            Link Kiosk
+          </>
+        )}
+      </button>
+
+      <p className="text-center text-xs font-semibold text-slate-400">
+        Each PIN can only be used once. The kiosk will update automatically once linked.
+      </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ElderlyProfileCard — live form: writes elder name + caregiver name to Firebase
+// The Kiosk listens to families/{familyId}/elder and updates immediately.
+// ---------------------------------------------------------------------------
+function ElderlyProfileCard({
+  familyId,
+  pushToast,
+  onUpdateCaregiverName,
+}: {
+  familyId: string;
+  pushToast: (msg: string) => void;
+  onUpdateCaregiverName: (name: string) => Promise<void>;
+}) {
+  const [elderName, setElderName] = useState("");
+  const [caregiverName, setCaregiverName] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // Load current values from Firebase on mount
+  useEffect(() => {
+    const unsubscribe = subscribeToFamilyPath(familyId, "elder", (snapshot) => {
+      if (!loaded) {
+        const data = snapshot.val() ?? {};
+        setElderName(data.name ?? "");
+        setCaregiverName(data.caregiverName ?? "");
+        setLoaded(true);
+      }
     });
+    return unsubscribe;
+  }, [familyId, loaded]);
 
-  return [...existing.filter((item) => item.id.startsWith("feed_")), ...computed].slice(0, 8);
+  async function handleSave() {
+    const trimmedElder = elderName.trim();
+    const trimmedCaregiver = caregiverName.trim();
+    if (!trimmedElder) {
+      pushToast("Please enter the elder's name.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateFamilyPath(familyId, "elder", {
+        name: trimmedElder,
+        caregiverName: trimmedCaregiver,
+        updatedAt: Date.now(),
+      });
+      if (trimmedCaregiver) {
+        await onUpdateCaregiverName(trimmedCaregiver);
+      }
+      pushToast("Profile saved — Kiosk will update shortly.");
+    } catch (err) {
+      console.error(err);
+      pushToast("Failed to save. Check your connection.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!loaded) {
+    return (
+      <div className="space-y-4">
+        {[1, 2].map((i) => (
+          <div key={i} className="h-16 animate-pulse rounded-[18px] bg-lavender" />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="rounded-[20px] bg-active/8 border border-active/20 px-5 py-4">
+        <p className="text-sm font-extrabold uppercase tracking-[0.2em] text-active">Live sync</p>
+        <p className="mt-1 text-sm font-medium text-slate-600">
+          Changes below are written to Firebase and the Kiosk screen updates automatically.
+        </p>
+      </div>
+
+      {/* Elder name */}
+      <div className="space-y-2">
+        <label className="block text-sm font-extrabold uppercase tracking-[0.18em] text-slate-500">
+          Elder's name (shown on Kiosk)
+        </label>
+        <input
+          id="elder-name-input"
+          type="text"
+          value={elderName}
+          onChange={(e) => setElderName(e.target.value)}
+          placeholder="e.g. Grandma Lan"
+          className="h-16 w-full rounded-[18px] bg-lavender px-5 text-lg font-medium text-slate-800 outline-none focus:ring-2 focus:ring-active/40"
+        />
+      </div>
+
+      {/* Caregiver name */}
+      <div className="space-y-2">
+        <label className="block text-sm font-extrabold uppercase tracking-[0.18em] text-slate-500">
+          Caregiver's name (shown in Kiosk messages)
+        </label>
+        <input
+          id="caregiver-name-input"
+          type="text"
+          value={caregiverName}
+          onChange={(e) => setCaregiverName(e.target.value)}
+          placeholder="e.g. Minh"
+          className="h-16 w-full rounded-[18px] bg-lavender px-5 text-lg font-medium text-slate-800 outline-none focus:ring-2 focus:ring-active/40"
+        />
+        <p className="text-xs font-semibold text-slate-400">
+          The Kiosk will say "Your child, [name], is at work and will be home soon."
+        </p>
+      </div>
+
+      <button
+        type="button"
+        id="save-elderly-profile-btn"
+        onClick={() => void handleSave()}
+        disabled={saving}
+        className="inline-flex min-h-[64px] w-full items-center justify-center gap-3 rounded-[20px] bg-active px-6 text-xl font-bold text-white transition hover:bg-[#7a5df0] disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {saving ? "Saving..." : "Save & Sync to Kiosk"}
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// OnboardingWizard — 3-step setup flow for newly registered accounts
+// ---------------------------------------------------------------------------
+function OnboardingWizard({
+  familyId,
+  pushToast,
+  caregiverName,
+  onComplete,
+}: {
+  familyId: string;
+  pushToast: (msg: string) => void;
+  caregiverName: string;
+  onComplete: () => void;
+}) {
+  const [step, setStep] = useState(1);
+  const [pin, setPin] = useState("");
+  const [linking, setLinking] = useState(false);
+  const [linkSuccess, setLinkSuccess] = useState(false);
+
+  // Step 2 profile
+  const [elderName, setElderName] = useState("");
+  const [profileCaregiverName, setProfileCaregiverName] = useState(caregiverName);
+
+  // Step 3 routine
+  const [routineName, setRoutineName] = useState("Morning Medicine");
+  const [routineTime, setRoutineTime] = useState("08:00");
+  const [routinePeriod, setRoutinePeriod] = useState<"morning" | "afternoon" | "evening">("morning");
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [autoRun, setAutoRun] = useState(true);
+  const [creating, setCreating] = useState(false);
+
+  async function handleLinkKiosk() {
+    const cleaned = pin.replace(/\s/g, "");
+    if (cleaned.length !== 6 || !/^\d{6}$/.test(cleaned)) {
+      pushToast("Please enter a valid 6-digit PIN.");
+      return;
+    }
+    setLinking(true);
+    try {
+      const result = await linkKioskByPin(cleaned, familyId);
+      if (result === "ok") {
+        setLinkSuccess(true);
+        pushToast("Kiosk paired! The TV screen will refresh now.");
+        setTimeout(() => setStep(2), 1200);
+      } else if (result === "not_found") {
+        pushToast("PIN not found. Check the Kiosk display and try again.");
+      } else {
+        pushToast("This PIN has already been claimed.");
+      }
+    } catch (err) {
+      console.error(err);
+      pushToast("Connection error. Try again.");
+    } finally {
+      setLinking(false);
+    }
+  }
+
+  async function handleSaveProfile() {
+    const trimmedElder = elderName.trim();
+    const trimmedCaregiver = profileCaregiverName.trim();
+    if (!trimmedElder) {
+      pushToast("Elder name is required.");
+      return;
+    }
+    try {
+      await updateFamilyPath(familyId, "elder", {
+        name: trimmedElder,
+        caregiverName: trimmedCaregiver,
+        status: "in_home",
+        lastSeenAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      setStep(3);
+    } catch (err) {
+      console.error(err);
+      pushToast("Failed to save profile.");
+    }
+  }
+
+  async function handleCreateFirstRoutine() {
+    const trimmedRoutine = routineName.trim();
+    if (!trimmedRoutine) {
+      pushToast("Routine name is required.");
+      return;
+    }
+    setCreating(true);
+    try {
+      // 1. Create first routine task
+      await updateFamilyPath(familyId, `tasks/task_init`, {
+        name: trimmedRoutine,
+        scheduled_time: routineTime,
+        is_auto: autoRun,
+        period: routinePeriod,
+        voiceEnabled: voiceEnabled,
+        status: "Pending",
+        text: `${elderName} ơi, đến giờ ${trimmedRoutine} rồi.`,
+        is_triggered: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        triggeredAt: null,
+        spokenAt: null,
+        completedAt: null,
+        triggerMode: null,
+      });
+
+      // 2. Initialize default kiosk details
+      await updateFamilyPath(familyId, "kiosk", {
+        online: true,
+        name: "Home Kiosk Screen",
+        lastHeartbeatAt: Date.now(),
+        volumeForced: false,
+        updatedAt: Date.now(),
+      });
+
+      // 3. Mark onboarding completed
+      await updateFamilyPath(familyId, "onboarding_completed", {
+        onboarding_completed: true,
+      });
+
+      pushToast("Setup completed! Welcome to your dashboard.");
+      onComplete();
+    } catch (err) {
+      console.error(err);
+      pushToast("Failed to complete setup.");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  return (
+    <div className="card-shell p-6 sm:p-8 space-y-6">
+      {/* Progress bar */}
+      <div className="flex items-center justify-between border-b border-slate-200/80 pb-4">
+        <div>
+          <h2 className="text-2xl font-black text-slate-900">Setup Wizard</h2>
+          <p className="text-sm font-semibold text-slate-500">Step {step} of 3</p>
+        </div>
+        <div className="flex gap-2">
+          {[1, 2, 3].map((s) => (
+            <span
+              key={s}
+              className={`h-3 w-8 rounded-full transition ${
+                s <= step ? "bg-active" : "bg-slate-200"
+              }`}
+            />
+          ))}
+        </div>
+      </div>
+
+      {step === 1 && (
+        <div className="space-y-5">
+          <div className="text-center space-y-2">
+            <span className="inline-flex h-16 w-16 items-center justify-center rounded-[20px] bg-active/10 text-active">
+              <Link2 className="h-8 w-8" />
+            </span>
+            <h3 className="text-2xl font-black text-slate-900">Link your Kiosk Screen</h3>
+            <p className="text-base font-semibold text-slate-600">
+              Open the <strong>Remember.For.Me</strong> app on your TV or tablet and enter the 6-digit PIN code displayed.
+            </p>
+          </div>
+
+          <input
+            type="text"
+            inputMode="numeric"
+            maxLength={6}
+            value={pin}
+            onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            placeholder="e.g. 123456"
+            className="h-16 w-full rounded-[18px] bg-lavender px-5 text-center text-2xl font-extrabold tracking-[0.3em] text-slate-800 outline-none placeholder:font-normal placeholder:tracking-normal placeholder:text-slate-400 focus:ring-2 focus:ring-active/40"
+          />
+
+          {linkSuccess ? (
+            <div className="flex items-center justify-center gap-2 text-emerald-600 font-bold">
+              <CheckCircle2 className="h-5 w-5 animate-bounce" />
+              Connected! Proceeding...
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void handleLinkKiosk()}
+              disabled={linking || pin.length < 6}
+              className="inline-flex min-h-[64px] w-full items-center justify-center gap-3 rounded-[20px] bg-active px-6 text-xl font-bold text-white transition hover:bg-[#7a5df0] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {linking ? "Pairing..." : "Link Kiosk & Continue"}
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setStep(2)}
+            className="text-sm font-bold text-slate-400 block text-center w-full hover:underline"
+          >
+            Skip for now (configure later)
+          </button>
+        </div>
+      )}
+
+      {step === 2 && (
+        <div className="space-y-5">
+          <div className="text-center space-y-2">
+            <span className="inline-flex h-16 w-16 items-center justify-center rounded-[20px] bg-active/10 text-active">
+              <UserRound className="h-8 w-8" />
+            </span>
+            <h3 className="text-2xl font-black text-slate-900">Family Information</h3>
+            <p className="text-base font-semibold text-slate-600">
+              Enter names so Kiosk messages can be personalized.
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            <label className="block space-y-2">
+              <span className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">
+                Elder's name (shown on Kiosk)
+              </span>
+              <input
+                type="text"
+                value={elderName}
+                onChange={(e) => setElderName(e.target.value)}
+                placeholder="e.g. Grandma Lan"
+                className="h-16 w-full rounded-[18px] bg-lavender px-5 text-lg font-medium text-slate-800 outline-none focus:ring-2 focus:ring-active/40"
+              />
+            </label>
+
+            <label className="block space-y-2">
+              <span className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">
+                Your name (Caregiver)
+              </span>
+              <input
+                type="text"
+                value={profileCaregiverName}
+                onChange={(e) => setProfileCaregiverName(e.target.value)}
+                placeholder="e.g. Minh"
+                className="h-16 w-full rounded-[18px] bg-lavender px-5 text-lg font-medium text-slate-800 outline-none focus:ring-2 focus:ring-active/40"
+              />
+            </label>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void handleSaveProfile()}
+            className="inline-flex min-h-[64px] w-full items-center justify-center gap-3 rounded-[20px] bg-active px-6 text-xl font-bold text-white transition hover:bg-[#7a5df0]"
+          >
+            Save &amp; Continue
+          </button>
+        </div>
+      )}
+
+      {step === 3 && (
+        <div className="space-y-5">
+          <div className="text-center space-y-2">
+            <span className="inline-flex h-16 w-16 items-center justify-center rounded-[20px] bg-active/10 text-active">
+              <Clock3 className="h-8 w-8" />
+            </span>
+            <h3 className="text-2xl font-black text-slate-900">First Daily Routine</h3>
+            <p className="text-base font-semibold text-slate-600">
+              Create the first daily alert for {elderName || "your elder"}.
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            <label className="block space-y-2">
+              <span className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">
+                Routine name
+              </span>
+              <input
+                type="text"
+                value={routineName}
+                onChange={(e) => setRoutineName(e.target.value)}
+                placeholder="e.g. Morning Medicine"
+                className="h-16 w-full rounded-[18px] bg-lavender px-5 text-lg font-medium text-slate-800 outline-none focus:ring-2 focus:ring-active/40"
+              />
+            </label>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block space-y-2">
+                <span className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Scheduled time
+                </span>
+                <input
+                  type="time"
+                  value={routineTime}
+                  onChange={(e) => setRoutineTime(e.target.value)}
+                  className="h-16 w-full rounded-[18px] bg-lavender px-5 text-lg font-medium text-slate-800 outline-none focus:ring-2 focus:ring-active/40"
+                />
+              </label>
+
+              <label className="block space-y-2">
+                <span className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">
+                  Routine Period
+                </span>
+                <select
+                  value={routinePeriod}
+                  onChange={(e) => setRoutinePeriod(e.target.value as any)}
+                  className="h-16 w-full rounded-[18px] bg-lavender px-5 text-lg font-medium text-slate-800 outline-none focus:ring-2 focus:ring-active/40"
+                >
+                  <option value="morning">Morning</option>
+                  <option value="afternoon">Afternoon</option>
+                  <option value="evening">Evening</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="flex items-center justify-between p-3 bg-lavender rounded-[16px]">
+              <div>
+                <p className="text-base font-extrabold text-slate-800">Voice Announce</p>
+                <p className="text-xs font-semibold text-slate-500">Speak out loud on Kiosk</p>
+              </div>
+              <input
+                type="checkbox"
+                checked={voiceEnabled}
+                onChange={(e) => setVoiceEnabled(e.target.checked)}
+                className="h-6 w-6 text-active rounded animate-none"
+              />
+            </div>
+
+            <div className="flex items-center justify-between p-3 bg-lavender rounded-[16px]">
+              <div>
+                <p className="text-base font-extrabold text-slate-800">Auto Run</p>
+                <p className="text-xs font-semibold text-slate-500">Trigger automatically at time</p>
+              </div>
+              <input
+                type="checkbox"
+                checked={autoRun}
+                onChange={(e) => setAutoRun(e.target.checked)}
+                className="h-6 w-6 text-active rounded animate-none"
+              />
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void handleCreateFirstRoutine()}
+            disabled={creating}
+            className="inline-flex min-h-[64px] w-full items-center justify-center gap-3 rounded-[20px] bg-active px-6 text-xl font-bold text-white transition hover:bg-[#7a5df0] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {creating ? "Finishing..." : "Create Routine & Finish Setup"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }

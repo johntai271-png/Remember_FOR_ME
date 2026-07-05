@@ -9,6 +9,7 @@ export type SettingsPage =
   | "login"
   | "linked-family"
   | "kiosk-connection"
+  | "kiosk-pairing"
   | "elderly-profile"
   | "emergency-contacts"
   | "reminder-defaults"

@@ -48,45 +48,45 @@ class _KioskHomePageState extends State<KioskHomePage> {
   Future<void> _configureTts() async {
     try {
       await _tts.awaitSpeakCompletion(true);
-      await _tts.setSpeechRate(0.48); // English speech rate is slightly faster than Vietnamese usually
+      await _tts.setSpeechRate(0.52);
       await _tts.setVolume(1.0);
       await _tts.setPitch(1.0);
-      await _selectEnglishVoice();
+      await _selectVietnameseVoice();
     } catch (e) {
       debugPrint('TTS configuration failed: $e');
     }
   }
 
-  /// Select English voice. Prefer en-US.
-  Future<void> _selectEnglishVoice() async {
+  /// Select Vietnamese voice. Prefer vi-VN.
+  Future<void> _selectVietnameseVoice() async {
     try {
-      await _tts.setLanguage('en-US');
+      await _tts.setLanguage('vi-VN');
     } catch (e) {
-      debugPrint('setLanguage(en-US) failed: $e');
+      debugPrint('setLanguage(vi-VN) failed: $e');
     }
 
     try {
       final voices = await _tts.getVoices;
       if (voices is! List) return;
 
-      Map? enVoice;
+      Map? viVoice;
       for (final raw in voices) {
         if (raw is! Map) continue;
         final locale = '${raw['locale'] ?? ''}'.toLowerCase();
-        if (locale.startsWith('en')) {
-          enVoice = raw;
+        if (locale.startsWith('vi')) {
+          viVoice = raw;
           break;
         }
       }
 
-      if (enVoice != null) {
+      if (viVoice != null) {
         await _tts.setVoice({
-          'name': '${enVoice['name']}',
-          'locale': '${enVoice['locale']}',
+          'name': '${viVoice['name']}',
+          'locale': '${viVoice['locale']}',
         });
-        debugPrint('Selected English voice: ${enVoice['name']}');
+        debugPrint('Selected Vietnamese voice: ${viVoice['name']}');
       } else {
-        debugPrint('English voice not found on this device.');
+        debugPrint('Vietnamese voice not found on this device.');
       }
     } catch (e) {
       debugPrint('Voice selection failed: $e');
@@ -119,8 +119,18 @@ class _KioskHomePageState extends State<KioskHomePage> {
 
       try {
         await _tts.stop();
+        // Tự động phân tích xem chuỗi có ký tự tiếng Việt hay không
+        final hasVi = RegExp(r'[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệđìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵ]')
+            .hasMatch(alert.message.toLowerCase());
+        if (hasVi) {
+          await _tts.setLanguage('vi-VN');
+          await _tts.setSpeechRate(0.52); // Tốc độ nói tiếng Việt
+        } else {
+          await _tts.setLanguage('en-US');
+          await _tts.setSpeechRate(0.48); // Tốc độ nói tiếng Anh
+        }
         await _tts.speak(alert.message);
-        debugPrint('TTS lần $round/$_ttsRepeatCount: ${alert.message}');
+        debugPrint('TTS lần $round/$_ttsRepeatCount (isVi=$hasVi): ${alert.message}');
       } catch (e) {
         debugPrint('TTS speak failed (round $round): $e');
         break;
@@ -142,11 +152,12 @@ class _KioskHomePageState extends State<KioskHomePage> {
     try {
       await _tts.stop();
     } catch (_) {}
-    await _sync.markTaskSpoken(alert.id);
+    // Xóa _speaking trước khi await để re-trigger không bị chặn
     _speaking.remove(alert.id);
     if (mounted && _activeAlert?.id == alert.id) {
       setState(() => _activeAlert = null);
     }
+    await _sync.markTaskSpoken(alert.id);
   }
 
   void _openDebugPanel() {

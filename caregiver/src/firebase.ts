@@ -8,6 +8,8 @@ import {
   updateProfile,
   type User,
 } from "firebase/auth";
+
+
 import {
   getDatabase,
   get,
@@ -16,10 +18,28 @@ import {
   runTransaction,
   set,
   update,
+  push,
   type DatabaseReference,
 } from "firebase/database";
 
 import type { CaregiverProfile } from "./types";
+
+export async function pushFamilyEvent(
+  familyId: string,
+  event: {
+    type: "trigger" | "complete" | "emergency" | "tracker_alert";
+    title: string;
+    message: string;
+    by?: string;
+  }
+) {
+  const eventsRef = ref(database, `families/${familyId}/events`);
+  const newEventRef = push(eventsRef);
+  await set(newEventRef, {
+    ...event,
+    timestamp: Date.now(),
+  });
+}
 
 export const firebaseConfig = {
   apiKey: "AIzaSyDXOR8sYBdXYWcb1nFktWJ-mxgc9-NDbPk",
@@ -91,8 +111,11 @@ export async function signUpCaregiver(
   email: string,
   password: string,
   displayName: string,
-  familyId = demoFamilyId,
+  familyId?: string,
 ) {
+  const resolvedFamilyId =
+    familyId || `family_${String(Date.now()).slice(-6)}_${Math.floor(Math.random() * 1000)}`;
+
   const credential = await createUserWithEmailAndPassword(auth, email, password);
 
   if (displayName.trim()) {
@@ -109,7 +132,7 @@ export async function signUpCaregiver(
       name: displayName.trim() || credential.user.email?.split("@")[0] || "Caregiver",
       email: credential.user.email,
       role: "Family caregiver",
-      familyId,
+      familyId: resolvedFamilyId,
       linkedFamilyMembers: ["Hy Nguyen", "Minh Nguyen", "Lan Tran"],
       preferences: {
         language: "English",
@@ -150,4 +173,29 @@ export function subscribeToUserProfile(
 
 export async function updateUserProfile(uid: string, payload: Record<string, any>) {
   return update(ref(database, `users/${uid}`), payload);
+}
+
+/**
+ * Attempts to link a Kiosk device to a family by writing the familyId
+ * into the pairing_codes/{pin} node that the Kiosk is listening to.
+ *
+ * Returns:
+ *  - "ok"        — PIN found, familyId written successfully
+ *  - "not_found" — PIN does not exist in the database
+ *  - "already"   — PIN already has a familyId (already claimed)
+ */
+export async function linkKioskByPin(
+  pin: string,
+  familyId: string,
+): Promise<"ok" | "not_found" | "already"> {
+  const pairingRef = ref(database, `pairing_codes/${pin}`);
+  const snapshot = await get(pairingRef);
+
+  if (!snapshot.exists()) return "not_found";
+
+  const data = snapshot.val() as Record<string, any>;
+  if (data.familyId && data.familyId !== "") return "already";
+
+  await update(pairingRef, { familyId });
+  return "ok";
 }

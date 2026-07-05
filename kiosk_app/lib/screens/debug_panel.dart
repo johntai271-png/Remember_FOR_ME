@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/kiosk_sync.dart';
 import '../theme/app_colors.dart';
@@ -64,6 +65,23 @@ class DebugPanel extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(vertical: 20),
                     ),
                     child: const Text('Simulate: Away (Wandering)',
+                        style: TextStyle(fontSize: 20)),
+                  ),
+                  const SizedBox(height: 24),
+                  FilledButton(
+                    onPressed: () async {
+                      final prefs = await SharedPreferences.getInstance();
+                      await prefs.remove('family_id');
+                      if (context.mounted) {
+                        Navigator.of(context).pushNamedAndRemoveUntil('/pairing', (route) => false);
+                      }
+                    },
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 20),
+                    ),
+                    child: const Text('Reset Kiosk Pairing (Logout)',
                         style: TextStyle(fontSize: 20)),
                   ),
                 ],

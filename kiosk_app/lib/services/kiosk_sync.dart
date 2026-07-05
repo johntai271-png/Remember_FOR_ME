@@ -97,8 +97,9 @@ class KioskSyncService extends ChangeNotifier {
     if (_recentlyQueued.contains(key)) return;
     _recentlyQueued.add(key);
     _alertController.add(alert);
-    // Xoá khỏi dedup sau 30 giây để cho phép nhắc lại vào lần sau
-    Future.delayed(const Duration(seconds: 30), () => _recentlyQueued.remove(key));
+    // Xoá khỏi dedup sau 5 giây — đủ để tránh double-fire nhưng không
+    // chặn re-trigger sau khi caregiver reset rồi bấm Trigger lại.
+    Future.delayed(const Duration(seconds: 5), () => _recentlyQueued.remove(key));
   }
 
   void _listenToFirebase() {
@@ -194,22 +195,41 @@ class KioskSyncService extends ChangeNotifier {
       return;
     }
 
-    // Xử lý id từ reminders/ node cũ (dạng 'reminder_morning')
+    String taskName = 'Routine';
     if (taskId.startsWith('reminder_')) {
       final key = taskId.replaceFirst('reminder_', '');
+      taskName = key == 'morning'
+          ? 'Morning routine'
+          : key == 'noon'
+              ? 'Lunch routine'
+              : 'Evening routine';
+
       await _familyRef.child('reminders/$key').update({
         'is_triggered': false,
         'triggeredAt': null,
       });
-      return;
+    } else {
+      try {
+        final task = _tasks.firstWhere((t) => t.id == taskId);
+        taskName = task.name;
+      } catch (_) {}
+
+      await _familyRef.child('tasks/$taskId').update({
+        'is_triggered': false,
+        'spokenAt': ServerValue.timestamp,
+        'status': 'Completed',
+        'completedAt': ServerValue.timestamp,
+      });
     }
 
-    // Node tasks/ mới (id thông thường)
-    await _familyRef.child('tasks/$taskId').update({
-      'is_triggered': false,
-      'spokenAt': ServerValue.timestamp,
-      'status': 'Completed',
-      'completedAt': ServerValue.timestamp,
+    // Ghi sự kiện hoàn thành nhắc nhở lên Firebase RTDB
+    final eventRef = _familyRef.child('events').push();
+    await eventRef.set({
+      'type': 'complete',
+      'title': 'Routine Completed',
+      'message': '"$taskName" acknowledged by $_elderName on the Kiosk.',
+      'timestamp': ServerValue.timestamp,
+      'by': 'Kiosk',
     });
   }
 
@@ -260,6 +280,15 @@ class KioskSyncService extends ChangeNotifier {
         'completedAt': null,
         'triggerMode': 'auto',
       });
+
+      final eventRef = _familyRef.child('events').push();
+      await eventRef.set({
+        'type': 'trigger',
+        'title': 'Routine Triggered',
+        'message': '"${task.name}" was triggered automatically by Kiosk schedule.',
+        'timestamp': ServerValue.timestamp,
+        'by': 'System',
+      });
     }
   }
 
@@ -280,6 +309,11 @@ class KioskSyncService extends ChangeNotifier {
   // --- Vitals mô phỏng: nhịp tim dao động quanh 72 ---
   void _startVitalsSimulation() {
     Future<void> tick() async {
+      try {
+        final overrideSnap = await _familyRef.child('elder/vitals/isOverride').get();
+        if (overrideSnap.exists && overrideSnap.value == true) return;
+      } catch (_) {}
+
       final hr = 68 + _random.nextInt(12); // 68..79
       final status = hr > 78 ? 'Elevated' : 'Normal';
       await _familyRef.child('elder/vitals').update({
