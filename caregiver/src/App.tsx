@@ -1,202 +1,353 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { Dispatch, ReactNode, SetStateAction } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Bell,
-  Check,
   CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
+  CircleAlert,
   Clock3,
-  Globe,
+  Filter,
   HeartPulse,
+  History,
   Home,
+  House,
   Info,
-  Link2,
-  LogIn,
-  LogOut,
-  MapPinned,
-  MonitorSmartphone,
-  Palette,
+  Play,
+  Save,
+  Settings,
   ShieldAlert,
-  UserRound,
-  Users,
+  Siren,
   Sparkles,
+  X,
 } from "lucide-react";
-import type { User } from "firebase/auth";
-
-import { BottomNavigation, ConfirmationModal, Header, Toast } from "./components/common";
 import {
-  demoFamilyId,
-  getUserProfile,
-  linkKioskByPin,
-  signInCaregiver,
-  signOutCaregiver,
-  signUpCaregiver,
-  subscribeToAuth,
-  subscribeToFamilyPath,
-  subscribeToUserProfile,
-  transactFamilyTask,
-  updateFamilyPath,
-  updateUserProfile,
-  pushFamilyEvent,
-} from "./firebase";
-import { HomeScreen, ManagementScreen } from "./screens/HomeScreen";
-import type {
-  AppTab,
-  AlertFeedItem,
-  BleTag,
-  CaregiverProfile,
-  DemoSettingsState,
-  Routine,
-  RoutinePeriod,
-  SettingsPage,
-  ToastState,
-} from "./types";
-import { createAvatarSvg, formatClock, formatRelativeTime } from "./utils";
+  createRoutine,
+  isBackendConfigured,
+  loadBackendSnapshot,
+  resolveAlert,
+  saveRoutine,
+  triggerRoutine,
+  type BackendAlert,
+  type BackendRoutine,
+  type BackendTimelineEvent,
+} from "./backend";
 
-const caregiverAvatar = createAvatarSvg("#1d5bd8", "#f0d1c3", "#5ca2ff");
+type RoutineStatus = BackendRoutine["status"];
+type ViewMode = "view" | "edit";
+type EscalationAction = BackendRoutine["escalationPolicy"]["steps"][number]["action"];
+type EscalationTemplate = "Gentle" | "Standard" | "High attention" | "Custom";
 
-const initialDemoSettings: DemoSettingsState = {
-  language: "English",
-  appearance: "Light",
-  timeFormat: "24-hour",
-  notifications: {
-    medicationReminders: true,
-    routineReminders: true,
-    trackerAlerts: true,
-    emergencyAlerts: true,
-    weeklySummary: false,
-  },
+type EscalationStep = {
+  delayMinutes: number;
+  action: EscalationAction;
 };
 
-const defaultProfile = {
-  name: "Hy Nguyen",
-  role: "Family caregiver",
-  email: "hy@example.com",
+type EscalationPolicy = {
+  enabled: boolean;
+  template: EscalationTemplate;
+  steps: EscalationStep[];
 };
 
-function playAlertSound() {
-  try {
-    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    let time = audioCtx.currentTime;
-    // Play 4 alternating tone beeps (emergency buzzer)
-    for (let i = 0; i < 4; i++) {
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(i % 2 === 0 ? 880 : 660, time); // A5 and E5 alternating tones
-      
-      gain.gain.setValueAtTime(0, time);
-      gain.gain.linearRampToValueAtTime(0.4, time + 0.05);
-      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.22);
-      
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      osc.start(time);
-      osc.stop(time + 0.25);
-      
-      time += 0.3;
-    }
-  } catch (err) {
-    console.error("Failed to play synthesized alert sound:", err);
-  }
-}
+type Routine = {
+  id: string;
+  name: string;
+  time: string;
+  autoRun: boolean;
+  status: RoutineStatus;
+  note: string;
+  updatedAt?: string;
+  mode: ViewMode;
+  caregiverInstructions?: string;
+  category?: "Medication" | "Wellness" | "Check-in";
+  escalationPolicy: EscalationPolicy;
+};
 
-const defaultBleTags: BleTag[] = [
+type CaregiverAlert = BackendAlert;
+
+type ToastState = {
+  id: number;
+  message: string;
+};
+
+type AppTab = "home" | "history" | "settings";
+
+type TimelineEventType =
+  | "TASK_CREATED"
+  | "REMINDER_SCHEDULED"
+  | "REMINDER_SHOWN"
+  | "REMINDER_REPEATED"
+  | "VOICE_REMINDER_PLAYED"
+  | "TASK_SNOOZED"
+  | "TASK_COMPLETED"
+  | "TASK_ALREADY_COMPLETED"
+  | "HELP_REQUESTED"
+  | "ESCALATION_TRIGGERED"
+  | "CAREGIVER_NOTIFIED"
+  | "DEVICE_OFFLINE"
+  | "NO_RESPONSE";
+
+type TimelineStatus =
+  | "Confirmed complete"
+  | "Reported already complete"
+  | "Explicitly postponed"
+  | "Help requested"
+  | "No interaction recorded"
+  | "Reminder may not have been seen"
+  | "Device offline"
+  | "Unknown";
+
+type TimelineEvent = BackendTimelineEvent;
+
+type TimelineFilters = {
+  taskId: string;
+  category: string;
+  eventType: string;
+  status: string;
+};
+
+type ReminderEffectiveness = {
+  channel: "VISUAL" | "VOICE" | "CAREGIVER_FOLLOW_UP";
+  remindersDelivered: number;
+  responsesRecorded: number;
+  completedAfterReminder: number;
+  completionRate: number;
+  medianResponseMinutes: number | null;
+  helpRequestRate: number;
+  snoozeRate: number;
+};
+
+type SuggestionType =
+  | "USE_VOICE_REMINDER"
+  | "USE_VISUAL_REMINDER"
+  | "ADD_FAMILY_VOICE_MESSAGE"
+  | "SHORTEN_ESCALATION_DELAY"
+  | "EXTEND_ESCALATION_DELAY"
+  | "NO_SUGGESTION";
+
+type InsightSuggestion = {
+  type: SuggestionType;
+  title: string;
+  message: string;
+  evidence: Record<string, number>;
+  requiresCaregiverApproval: boolean;
+};
+
+const initialRoutines: Routine[] = [
   {
-    id: "wallet",
-    name: "Leather Wallet Tag",
-    location: "Hallway Key Box",
-    hardwareId: "BLE-WALLET-001",
-    status: "safe",
-    connectionStatus: "connected",
-    lastConnectedAt: Date.now() - 5 * 60 * 1000,
+    id: "task_001",
+    name: "Prepare morning medicine",
+    time: "08:00 AM",
+    autoRun: true,
+    status: "Completed earlier",
+    note: "Confirmed after reminder at Jul 12, 2026 08:12 AM",
+    updatedAt: "Jul 12, 2026 08:12 AM",
+    mode: "edit",
+    caregiverInstructions: "Blue pill first, then water.",
+    category: "Medication",
+    escalationPolicy: createEscalationPolicy("Standard"),
   },
   {
-    id: "keys",
-    name: "Front Door Keys Tag",
-    location: "Kitchen Hook",
-    hardwareId: "BLE-KEYS-002",
-    status: "safe",
-    connectionStatus: "connected",
-    lastConnectedAt: Date.now() - 9 * 60 * 1000,
+    id: "task_002",
+    name: "Lunch & Hydration",
+    time: "01:00 PM",
+    autoRun: false,
+    status: "Snoozed",
+    note: "Snoozed for 15 minutes at Jul 12, 2026 12:58 PM",
+    updatedAt: "Jul 12, 2026 12:58 PM",
+    mode: "view",
+    caregiverInstructions: "Please bring the orange cup.",
+    category: "Wellness",
+    escalationPolicy: createEscalationPolicy("Gentle"),
   },
   {
-    id: "pillbox",
-    name: "Pillbox Smart Tag",
-    location: "Dining Table Drawer",
-    hardwareId: "BLE-PILL-003",
-    status: "safe",
-    connectionStatus: "disconnected",
-    lastConnectedAt: null,
+    id: "task_003",
+    name: "Check evening routine",
+    time: "07:00 PM",
+    autoRun: true,
+    status: "Needs help",
+    note: "Help requested at Jul 12, 2026 07:02 PM",
+    updatedAt: "Jul 12, 2026 07:02 PM",
+    mode: "view",
+    caregiverInstructions: "Ask if the evening medication is already on the table.",
+    category: "Check-in",
+    escalationPolicy: createEscalationPolicy("High attention"),
   },
 ];
 
-function mergeSettings(
-  remoteSettings?: Partial<DemoSettingsState> | null,
-): DemoSettingsState {
-  return {
-    ...initialDemoSettings,
-    ...remoteSettings,
-    notifications: {
-      ...initialDemoSettings.notifications,
-      ...remoteSettings?.notifications,
-    },
-  };
-}
+const initialAlerts: CaregiverAlert[] = [
+  {
+    id: "help-evening-001",
+    resident: "Mom (Eleanor)",
+    taskName: "Check evening routine",
+    scheduledTime: "07:00 PM",
+    requestedAt: "Jul 12, 2026 07:02 PM",
+    instructions: "Ask if the evening medication is already on the table.",
+  },
+];
+
+const initialTimelineEvents: TimelineEvent[] = [
+  {
+    id: "evt-001",
+    timestamp: "2026-07-12T08:00:00.000Z",
+    taskId: "task_001",
+    taskName: "Prepare morning medicine",
+    taskCategory: "Medication",
+    careRecipient: "Mom (Eleanor)",
+    eventType: "REMINDER_SHOWN",
+    status: "Unknown",
+    source: "scheduler",
+    description: "Morning medication reminder shown.",
+    channel: "VISUAL",
+  },
+  {
+    id: "evt-002",
+    timestamp: "2026-07-12T08:10:00.000Z",
+    taskId: "task_001",
+    taskName: "Prepare morning medicine",
+    taskCategory: "Medication",
+    careRecipient: "Mom (Eleanor)",
+    eventType: "REMINDER_REPEATED",
+    status: "Unknown",
+    source: "system",
+    description: "Reminder repeated after no recorded response.",
+    channel: "VISUAL",
+    metadata: { delayMinutes: 10 },
+  },
+  {
+    id: "evt-003",
+    timestamp: "2026-07-12T08:12:00.000Z",
+    taskId: "task_001",
+    taskName: "Prepare morning medicine",
+    taskCategory: "Medication",
+    careRecipient: "Mom (Eleanor)",
+    eventType: "TASK_ALREADY_COMPLETED",
+    status: "Reported already complete",
+    source: "care recipient",
+    description: "Task marked already completed.",
+    channel: "VISUAL",
+    metadata: { responseDelayMinutes: 12 },
+  },
+  {
+    id: "evt-004",
+    timestamp: "2026-07-12T12:00:00.000Z",
+    taskId: "task_002",
+    taskName: "Lunch & Hydration",
+    taskCategory: "Wellness",
+    careRecipient: "Mom (Eleanor)",
+    eventType: "REMINDER_SHOWN",
+    status: "Unknown",
+    source: "scheduler",
+    description: "Lunch reminder shown.",
+    channel: "VISUAL",
+  },
+  {
+    id: "evt-005",
+    timestamp: "2026-07-12T12:15:00.000Z",
+    taskId: "task_002",
+    taskName: "Lunch & Hydration",
+    taskCategory: "Wellness",
+    careRecipient: "Mom (Eleanor)",
+    eventType: "TASK_SNOOZED",
+    status: "Explicitly postponed",
+    source: "care recipient",
+    description: "Reminder postponed for 15 minutes.",
+    channel: "VISUAL",
+    metadata: { responseDelayMinutes: 15 },
+  },
+  {
+    id: "evt-006",
+    timestamp: "2026-07-12T19:00:00.000Z",
+    taskId: "task_003",
+    taskName: "Check evening routine",
+    taskCategory: "Check-in",
+    careRecipient: "Mom (Eleanor)",
+    eventType: "REMINDER_SHOWN",
+    status: "Unknown",
+    source: "scheduler",
+    description: "Evening routine reminder shown.",
+    channel: "VISUAL",
+  },
+  {
+    id: "evt-007",
+    timestamp: "2026-07-12T19:20:00.000Z",
+    taskId: "task_003",
+    taskName: "Check evening routine",
+    taskCategory: "Check-in",
+    careRecipient: "Mom (Eleanor)",
+    eventType: "VOICE_REMINDER_PLAYED",
+    status: "Unknown",
+    source: "system",
+    description: "Voice reminder played after no response.",
+    channel: "VOICE",
+  },
+  {
+    id: "evt-008",
+    timestamp: "2026-07-12T19:40:00.000Z",
+    taskId: "task_003",
+    taskName: "Check evening routine",
+    taskCategory: "Check-in",
+    careRecipient: "Mom (Eleanor)",
+    eventType: "CAREGIVER_NOTIFIED",
+    status: "No interaction recorded",
+    source: "system",
+    description: "Caregiver notified after repeated unanswered reminders.",
+    channel: "CAREGIVER_FOLLOW_UP",
+  },
+  {
+    id: "evt-009",
+    timestamp: "2026-07-12T19:42:00.000Z",
+    taskId: "task_003",
+    taskName: "Check evening routine",
+    taskCategory: "Check-in",
+    careRecipient: "Mom (Eleanor)",
+    eventType: "HELP_REQUESTED",
+    status: "Help requested",
+    source: "care recipient",
+    description: "Help requested from the reminder screen.",
+    channel: "CAREGIVER_FOLLOW_UP",
+    metadata: { responseDelayMinutes: 42 },
+  },
+  {
+    id: "evt-010",
+    timestamp: "2026-07-11T18:10:00.000Z",
+    taskId: "task_003",
+    taskName: "Check evening routine",
+    taskCategory: "Check-in",
+    careRecipient: "Mom (Eleanor)",
+    eventType: "DEVICE_OFFLINE",
+    status: "Device offline",
+    source: "system",
+    description: "Kiosk was offline during part of the reminder window.",
+  },
+  {
+    id: "evt-011",
+    timestamp: "2026-07-11T18:20:00.000Z",
+    taskId: "task_003",
+    taskName: "Check evening routine",
+    taskCategory: "Check-in",
+    careRecipient: "Mom (Eleanor)",
+    eventType: "NO_RESPONSE",
+    status: "Reminder may not have been seen",
+    source: "system",
+    description: "No completion was recorded. The kiosk was offline during part of the reminder window.",
+  },
+];
+
+const caregiverAvatar = createAvatarSvg("#1d5bd8", "#f0d1c3", "#5ca2ff");
+const elderAvatar = createAvatarSvg("#8b6cff", "#d9e8d2", "#eef2ff");
 
 export default function App() {
+  const [routines, setRoutines] = useState<Routine[]>(initialRoutines);
+  const [alerts, setAlerts] = useState<CaregiverAlert[]>(initialAlerts);
+  const [allTimelineEvents, setAllTimelineEvents] = useState<TimelineEvent[]>(initialTimelineEvents);
+  const [backendConnected, setBackendConnected] = useState(isBackendConfigured());
   const [activeTab, setActiveTab] = useState<AppTab>("home");
-  const [settingsPage, setSettingsPage] = useState<SettingsPage>("root");
-  const [familyId, setFamilyId] = useState(demoFamilyId);
-  const [elder, setElder] = useState<any>({
-    name: "Ngoai",
-    displayName: "Mom (Eleanor)",
-    caregiverGreeting: "Good morning, Sarah",
-    status: "in_home",
-    locationLabel: "In Home",
-    lastSeenAt: Date.now() - 2 * 60 * 1000,
-    vitals: {
-      status: "No data",
-      heartRateBpm: null,
-    },
+  const [timelineFilters, setTimelineFilters] = useState<TimelineFilters>({
+    taskId: "all",
+    category: "all",
+    eventType: "all",
+    status: "all",
   });
-  const [kiosk, setKiosk] = useState<any>({
-    online: false,
-    name: "Living Room Kiosk",
-    lastHeartbeatAt: null,
-    volumeForced: false,
-  });
-  const [trackerAlert, setTrackerAlert] = useState<any>({
-    is_active: false,
-    type: null,
-    source: "Tracker",
-    message: null,
-    severity: "normal",
-    updatedAt: null,
-    safeZoneStatus: "inside",
-  });
-  const [routines, setRoutines] = useState<Routine[]>([]);
-  const [dataLoading, setDataLoading] = useState(true);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
-  const [showLogoutModal, setShowLogoutModal] = useState(false);
-  const [demoSettings, setDemoSettings] = useState<DemoSettingsState>(
-    initialDemoSettings,
-  );
-  const [authUser, setAuthUser] = useState<User | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [settingsReady, setSettingsReady] = useState(false);
-  const [caregiverProfile, setCaregiverProfile] = useState<CaregiverProfile | null>(null);
-  const [profileName, setProfileName] = useState(defaultProfile.name);
-  const [profileRole, setProfileRole] = useState(defaultProfile.role);
-  const [profileEmail, setProfileEmail] = useState(defaultProfile.email);
-  const [bleTags, setBleTags] = useState<BleTag[]>(defaultBleTags);
-  const [feedItems, setFeedItems] = useState<AlertFeedItem[]>([]);
-  const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null);
-
-  const lastPersistedSettingsRef = useRef(JSON.stringify(initialDemoSettings));
 
   useEffect(() => {
     if (!toast) return;
@@ -205,862 +356,204 @@ export default function App() {
   }, [toast]);
 
   useEffect(() => {
-    let unsubscribeProfile = () => {};
-
-    const unsubscribeAuth = subscribeToAuth(async (user) => {
-      unsubscribeProfile();
-      setAuthUser(user);
-      setAuthLoading(true);
-
-      if (!user) {
-        setCaregiverProfile(null);
-        setFamilyId(demoFamilyId);
-        setProfileName(defaultProfile.name);
-        setProfileRole(defaultProfile.role);
-        setProfileEmail(defaultProfile.email);
-        setDemoSettings(initialDemoSettings);
-        lastPersistedSettingsRef.current = JSON.stringify(initialDemoSettings);
-        setOnboardingCompleted(true);
-        setSettingsReady(true);
-        setAuthLoading(false);
-        return;
-      }
-
-      const initialProfile = await getUserProfile(user.uid).catch(() => null);
-      if (initialProfile) {
-        const merged = mergeSettings(initialProfile.preferences);
-        setDemoSettings(merged);
-        lastPersistedSettingsRef.current = JSON.stringify(merged);
-      }
-
-      unsubscribeProfile = subscribeToUserProfile(user.uid, (profile) => {
-        const resolvedProfile = profile ?? initialProfile;
-        const mergedSettings = mergeSettings(resolvedProfile?.preferences);
-
-        setCaregiverProfile(resolvedProfile);
-        setFamilyId(resolvedProfile?.familyId || demoFamilyId);
-        setProfileName(
-          resolvedProfile?.name || user.displayName || user.email?.split("@")[0] || "Caregiver",
-        );
-        setProfileRole(resolvedProfile?.role || "Family caregiver");
-        setProfileEmail(resolvedProfile?.email || user.email || "No email");
-        setDemoSettings(mergedSettings);
-        lastPersistedSettingsRef.current = JSON.stringify(mergedSettings);
-        setSettingsReady(true);
-        setAuthLoading(false);
-      });
+    let active = true;
+    loadBackendSnapshot().then((snapshot) => {
+      if (!active) return;
+      setRoutines(snapshot.routines);
+      setAlerts(snapshot.alerts);
+      setAllTimelineEvents(snapshot.timeline.length ? snapshot.timeline : initialTimelineEvents);
+      setBackendConnected(snapshot.backendConnected);
     });
-
     return () => {
-      unsubscribeProfile();
-      unsubscribeAuth();
+      active = false;
     };
   }, []);
 
-  useEffect(() => {
-    let isFirstElder = true;
-    let lastVitalsStatus = "Normal";
-    const unsubElder = subscribeToFamilyPath(familyId, "elder", (snapshot) => {
-      const value = snapshot.val();
-      if (value) {
-        setElder(value);
-        const vitalsStatus = value.vitals?.status || "Normal";
-        if (vitalsStatus !== "Normal" && vitalsStatus !== lastVitalsStatus && !isFirstElder) {
-          playAlertSound();
-        }
-        lastVitalsStatus = vitalsStatus;
-      }
-      isFirstElder = false;
-    });
-
-    const unsubKiosk = subscribeToFamilyPath(familyId, "kiosk", (snapshot) => {
-      const value = snapshot.val();
-      if (value) setKiosk((current: any) => ({ ...current, ...value }));
-    });
-
-    let isFirstTracker = true;
-    const unsubTracker = subscribeToFamilyPath(familyId, "tracker_alert", (snapshot) => {
-      const value = snapshot.val();
-      if (value) {
-        setTrackerAlert(value);
-        if (value.is_active && !isFirstTracker) {
-          playAlertSound();
-        }
-      }
-      isFirstTracker = false;
-    });
-
-    const unsubBleTags = subscribeToFamilyPath(familyId, "ble_tags", (snapshot) => {
-      const data = snapshot.val();
-      if (!data) {
-        setBleTags(familyId === demoFamilyId ? defaultBleTags : []);
-        return;
-      }
-
-      const list = Object.entries(data).map(([id, value]: [string, any]) => ({
-        id,
-        name: value.name || "Untitled tag",
-        location: value.location || "No location set",
-        hardwareId: value.hardwareId || "",
-        status: value.status === "away" ? "away" : "safe",
-        connectionStatus:
-          value.connectionStatus === "connected" ||
-          value.connectionStatus === "pairing" ||
-          value.connectionStatus === "disconnected"
-            ? value.connectionStatus
-            : "disconnected",
-        lastConnectedAt: value.lastConnectedAt || null,
-      })) as BleTag[];
-
-      setBleTags(list);
-    });
-
-    const unsubTasks = subscribeToFamilyPath(familyId, "tasks", (snapshot) => {
-      const data = snapshot.val() || {};
-      const list = Object.entries(data).map(([id, value]: [string, any]) => ({
-        id,
-        name: value.name || "Untitled task",
-        time: value.scheduled_time || "09:00",
-        autoRun: !!value.is_auto,
-        period: normalizeRoutinePeriod(value.period, value.scheduled_time),
-        voiceEnabled: !!(value.voiceEnabled ?? value.voice ?? false),
-        status: value.status || "Pending",
-        note: buildTaskNote(value),
-        updatedAt:
-          value.updatedAt ||
-          value.completedAt ||
-          value.triggeredAt ||
-          value.lastTriggeredAt ||
-          undefined,
-        mode: "view",
-      })) as Routine[];
-
-      list.sort((a, b) => a.time.localeCompare(b.time));
-
-      setRoutines((current) =>
-        list.map((item) => {
-          const existing = current.find((routine) => routine.id === item.id);
-          return existing ? { ...item, mode: existing.mode } : item;
-        }),
-      );
-      setDataLoading(false);
-    });
-
-    const unsubEvents = subscribeToFamilyPath(familyId, "events", (snapshot) => {
-      const data = snapshot.val();
-      if (!data) {
-        setFeedItems([]);
-        return;
-      }
-      const list = Object.entries(data).map(([id, val]: [string, any]) => ({
-        id,
-        level:
-          val.type === "emergency"
-            ? "danger"
-            : val.type === "complete"
-              ? "success"
-              : val.type === "tracker_alert"
-                ? "warning"
-                : "info",
-        title: val.title || "Activity Log",
-        message: val.message || "",
-        timestampLabel: formatRelativeTime(val.timestamp || Date.now()),
-        timestamp: val.timestamp || 0,
-      }));
-      // Sort descending by timestamp
-      list.sort((a, b) => b.timestamp - a.timestamp);
-      // Keep only last 10 events
-      setFeedItems(list.slice(0, 10));
-    });
-
-    const unsubOnboarding = subscribeToFamilyPath(familyId, "onboarding_completed", (snapshot) => {
-      setOnboardingCompleted(!!snapshot.val());
-    });
-
-    return () => {
-      unsubElder();
-      unsubKiosk();
-      unsubTracker();
-      unsubBleTags();
-      unsubTasks();
-      unsubEvents();
-      unsubOnboarding();
-    };
-  }, [familyId]);
-
-  useEffect(() => {
-    if (!authUser || !settingsReady) return;
-
-    const serialized = JSON.stringify(demoSettings);
-    if (serialized === lastPersistedSettingsRef.current) return;
-
-    const timer = window.setTimeout(() => {
-      void updateUserProfile(authUser.uid, {
-        preferences: demoSettings,
-        updatedAt: Date.now(),
-      })
-        .then(() => {
-          lastPersistedSettingsRef.current = serialized;
-        })
-        .catch((error) => {
-          console.error(error);
-          pushToast("Could not sync preferences right now.");
-        });
-    }, 500);
-
-    return () => window.clearTimeout(timer);
-  }, [authUser, demoSettings, settingsReady]);
-
-  const historyItems = useMemo(() => {
-    return [...routines]
-      .filter((routine) => routine.updatedAt)
-      .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
-  }, [routines]);
-
-  const completedRoutines = useMemo(
-    () => historyItems.filter((routine) => routine.status === "Completed").slice(0, 4),
-    [historyItems],
+  const completedCount = useMemo(
+    () =>
+      routines.filter(
+        (routine) => routine.status === "Completed" || routine.status === "Completed earlier",
+      ).length,
+    [routines],
   );
+  const timelineEvents = useMemo(
+    () =>
+      [...allTimelineEvents]
+        .sort((a, b) => +new Date(b.timestamp) - +new Date(a.timestamp))
+        .filter((event) => (timelineFilters.taskId === "all" ? true : event.taskId === timelineFilters.taskId))
+        .filter((event) =>
+          timelineFilters.category === "all" ? true : event.taskCategory === timelineFilters.category,
+        )
+        .filter((event) =>
+          timelineFilters.eventType === "all" ? true : event.eventType === timelineFilters.eventType,
+        )
+        .filter((event) => (timelineFilters.status === "all" ? true : event.status === timelineFilters.status)),
+    [allTimelineEvents, timelineFilters],
+  );
+  const effectiveness = useMemo(() => calculateReminderEffectiveness(allTimelineEvents), [allTimelineEvents]);
+  const suggestion = useMemo(() => buildInsightSuggestion(effectiveness), [effectiveness]);
 
-  const upcomingRoutine = useMemo(() => {
-    const pending = routines.filter((routine) => routine.status !== "Completed");
-    if (pending.length === 0) return null;
+  const handleTrigger = async (id: string) => {
+    const stamp = formatTimestamp(new Date());
+    const target = routines.find((routine) => routine.id === id);
+    if (!target) return;
+    const nextRoutine = { ...target, status: "Pending" as RoutineStatus, updatedAt: stamp, note: `Reminder sent at ${stamp}` };
+    setRoutines((current) => current.map((routine) => (routine.id === id ? nextRoutine : routine)));
+    await triggerRoutine(nextRoutine);
+    pushToast("Reminder sent to the kiosk.");
+  };
 
-    const sorted = [...pending].sort((a, b) => a.time.localeCompare(b.time));
-    const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
-    const nextToday = sorted.find((routine) => {
-      const [hourText = "0", minuteText = "0"] = routine.time.split(":");
-      const minutes = Number(hourText) * 60 + Number(minuteText);
-      return minutes >= nowMinutes;
-    });
+  const handleFieldChange = <K extends keyof Routine>(id: string, key: K, value: Routine[K]) => {
+    setRoutines((current) =>
+      current.map((routine) => (routine.id === id ? { ...routine, [key]: value } : routine)),
+    );
+  };
 
-    return nextToday || sorted[0] || null;
-  }, [routines]);
+  const handleSave = async (id: string) => {
+    const stamp = formatTimestamp(new Date());
+    const target = routines.find((routine) => routine.id === id);
+    if (!target) return;
+    const nextRoutine = { ...target, mode: "view" as ViewMode, updatedAt: stamp, note: `Routine updated at ${stamp}` };
+    setRoutines((current) => current.map((routine) => (routine.id === id ? nextRoutine : routine)));
+    await saveRoutine(nextRoutine);
+    pushToast("Routine saved.");
+  };
 
-  const linkedFamilyMembers = caregiverProfile?.linkedFamilyMembers || [
-    "Hy Nguyen",
-    "Minh Nguyen",
-    "Lan Tran",
-  ];
+  const handleModeChange = (id: string, mode: ViewMode) => {
+    setRoutines((current) =>
+      current.map((routine) => (routine.id === id ? { ...routine, mode } : routine)),
+    );
+  };
 
-  function pushToast(message: string) {
+  const handleAddNew = async () => {
+    const nextIndex = routines.length + 1;
+    const nextRoutine: Routine = {
+        id: `task_custom_${nextIndex.toString().padStart(3, "0")}`,
+        name: `New routine ${nextIndex}`,
+        time: "09:30 AM",
+        autoRun: false,
+        status: "Pending",
+        note: "Awaiting first reminder",
+        mode: "edit",
+        caregiverInstructions: "",
+        category: "Wellness",
+        escalationPolicy: createEscalationPolicy("Gentle"),
+      };
+    setRoutines((current) => [...current, nextRoutine]);
+    await createRoutine(nextRoutine);
+    pushToast("New routine added.");
+  };
+
+  const handleBell = () => {
+    pushToast(alerts.length ? `${alerts.length} help alert${alerts.length > 1 ? "s" : ""} waiting.` : "No new notifications.");
+  };
+
+  const handleSendEmergency = () => {
+    setShowEmergencyModal(false);
+    pushToast("Emergency services contacted.");
+  };
+
+  const handleResolveAlert = async (alertId: string) => {
+    setAlerts((current) => current.filter((alert) => alert.id !== alertId));
+    await resolveAlert(alertId);
+    pushToast("Help alert marked as handled.");
+  };
+
+  const pushToast = (message: string) => {
     setToast({
       id: Date.now(),
       message,
     });
-  }
-
-  async function pushFeedItem(item: Omit<AlertFeedItem, "id" | "timestampLabel">) {
-    try {
-      let type: "trigger" | "complete" | "emergency" | "tracker_alert" = "trigger";
-      if (item.level === "danger") type = "emergency";
-      else if (item.level === "success") type = "complete";
-      else if (item.level === "warning") type = "tracker_alert";
-
-      await pushFamilyEvent(familyId, {
-        type,
-        title: item.title,
-        message: item.message,
-        by: caregiverProfile?.name || authUser?.displayName || "Caregiver",
-      });
-    } catch (error) {
-      console.error("Failed to push event:", error);
-    }
-  }
-
-  async function handleTrigger(id: string) {
-    const routine = routines.find((item) => item.id === id);
-    if (!routine) return;
-
-    try {
-      const { committed } = await transactFamilyTask(familyId, id, (currentTask) => {
-        if (!currentTask || currentTask.status === "Running") return currentTask;
-
-        return {
-          ...currentTask,
-          status: "Running",
-          text: routine.name,
-          is_triggered: true,
-          triggeredAt: Date.now(),
-          spokenAt: null,
-          completedAt: null,
-          updatedAt: Date.now(),
-          triggerMode: "manual",
-        };
-      });
-
-      if (!committed) {
-        pushToast(`Routine ${routine.name} is already running.`);
-        return;
-      }
-
-      pushToast(`Sent "${routine.name}" to the kiosk.`);
-      pushFeedItem({
-        level: "info",
-        title: "Reminder sent to kiosk",
-        message: `${routine.name} was pushed for ${formatClock(routine.time)}.`,
-      });
-    } catch (error) {
-      console.error(error);
-      pushToast(`Failed to trigger ${routine.name}.`);
-    }
-  }
-
-  function handleFieldChange<K extends keyof Routine>(
-    id: string,
-    key: K,
-    value: Routine[K],
-  ) {
-    setRoutines((current) =>
-      current.map((routine) =>
-        routine.id === id ? { ...routine, [key]: value } : routine,
-      ),
-    );
-  }
-
-  async function handleSave(id: string) {
-    const routine = routines.find((item) => item.id === id);
-    if (!routine) return;
-
-    if (!routine.name.trim() || !routine.time) {
-      pushToast("Task name and time are required.");
-      return;
-    }
-
-    try {
-      await updateFamilyPath(familyId, `tasks/${id}`, {
-        name: routine.name.trim(),
-        text: routine.name.trim(),
-        scheduled_time: routine.time,
-        is_auto: routine.autoRun,
-        period: routine.period,
-        voiceEnabled: routine.voiceEnabled,
-        updatedAt: Date.now(),
-      });
-
-      setRoutines((current) =>
-        current.map((item) => (item.id === id ? { ...item, mode: "view" } : item)),
-      );
-      pushToast("Routine saved.");
-    } catch (error) {
-      console.error(error);
-      pushToast("Failed to save routine.");
-    }
-  }
-
-  function handleModeChange(id: string, mode: Routine["mode"]) {
-    setRoutines((current) =>
-      current.map((routine) => (routine.id === id ? { ...routine, mode } : routine)),
-    );
-  }
-
-  async function handleAddNew() {
-    const nextId = `task_${String(Date.now()).slice(-6)}`;
-
-    try {
-      await updateFamilyPath(familyId, `tasks/${nextId}`, {
-        name: `New routine ${routines.length + 1}`,
-        scheduled_time: "09:00",
-        is_auto: false,
-        period: "morning",
-        voiceEnabled: true,
-        status: "Pending",
-        text: "",
-        is_triggered: false,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        triggeredAt: null,
-        spokenAt: null,
-        completedAt: null,
-        triggerMode: null,
-      });
-      pushToast("New routine added.");
-      pushFeedItem({
-        level: "success",
-        title: "Routine created",
-        message: `New routine ${routines.length + 1} was added to the caregiver plan.`,
-      });
-    } catch (error) {
-      console.error(error);
-      pushToast("Failed to add routine.");
-    }
-  }
-
-  async function handleReset(id: string) {
-    const routine = routines.find((item) => item.id === id);
-    if (!routine) return;
-    try {
-      await updateFamilyPath(familyId, `tasks/${id}`, {
-        status: "Pending",
-        is_triggered: false,
-        triggeredAt: null,
-        spokenAt: null,
-        completedAt: null,
-        triggerMode: null,
-        updatedAt: Date.now(),
-      });
-      pushToast(`"${routine.name}" reset to Pending.`);
-    } catch (error) {
-      console.error(error);
-      pushToast("Failed to reset routine.");
-    }
-  }
-
-  async function handleClearCompleted() {
-    const completed = routines.filter((item) => item.status === "Completed");
-    if (completed.length === 0) return;
-    const confirm = window.confirm(`Are you sure you want to permanently delete all ${completed.length} completed routines?`);
-    if (!confirm) return;
-    try {
-      const updates: Record<string, any> = {};
-      completed.forEach((routine) => {
-        updates[`tasks/${routine.id}`] = null;
-      });
-      await updateFamilyPath(familyId, "", updates);
-      pushToast(`Deleted ${completed.length} completed routines.`);
-    } catch (error) {
-      console.error(error);
-      pushToast("Failed to clear completed routines.");
-    }
-  }
-
-  async function handleSendEmergency() {
-    setShowEmergencyModal(false);
-
-    try {
-      await updateFamilyPath(familyId, "emergency", {
-        is_triggered: true,
-        triggeredAt: Date.now(),
-        message: "Emergency! Your caregiver is calling. Please look at the screen.",
-      });
-      pushToast("Emergency services contacted.");
-      pushFeedItem({
-        level: "danger",
-        title: "Emergency workflow started",
-        message: "The caregiver requested immediate assistance from the home workflow.",
-      });
-    } catch (error) {
-      console.error(error);
-      pushToast("Failed to contact emergency services.");
-    }
-  }
-
-  function handleBottomNav(tab: AppTab) {
-    setActiveTab(tab);
-    if (tab === "settings") {
-      setSettingsPage("root");
-    }
-  }
-
-  async function handleToggleTag(id: string) {
-    const target = bleTags.find((item) => item.id === id);
-    if (!target) return;
-
-    const nextStatus = target.status === "safe" ? "away" : "safe";
-    setBleTags((current) =>
-      current.map((tag) =>
-        tag.id === id
-          ? {
-              ...tag,
-              status: nextStatus,
-            }
-          : tag,
-      ),
-    );
-
-    try {
-      await updateFamilyPath(familyId, `ble_tags/${id}`, {
-        status: nextStatus,
-        updatedAt: Date.now(),
-      });
-    } catch (error) {
-      console.error(error);
-      pushToast("Failed to update tag status.");
-    }
-
-    pushFeedItem({
-      level: target.status === "safe" ? "warning" : "success",
-      title: target.status === "safe" ? "Tag moved out of range" : "Tag returned to home zone",
-      message:
-        target.status === "safe"
-          ? `${target.name} is no longer near ${target.location}.`
-          : `${target.name} is back near ${target.location}.`,
-    });
-  }
-
-  async function handleAddTag(name: string, location: string, hardwareId: string) {
-    const trimmedName = name.trim();
-    const trimmedLocation = location.trim();
-    const trimmedHardwareId = hardwareId.trim();
-
-    if (!trimmedName || !trimmedLocation || !trimmedHardwareId) {
-      pushToast("Tag name, location, and device ID are required.");
-      return false;
-    }
-
-    const nextTag: BleTag = {
-      id: `tag_${Date.now()}`,
-      name: trimmedName,
-      location: trimmedLocation,
-      hardwareId: trimmedHardwareId,
-      status: "safe",
-      connectionStatus: "disconnected",
-      lastConnectedAt: null,
-    };
-
-    try {
-      await updateFamilyPath(familyId, `ble_tags/${nextTag.id}`, {
-        name: nextTag.name,
-        location: nextTag.location,
-        hardwareId: nextTag.hardwareId,
-        status: nextTag.status,
-        connectionStatus: nextTag.connectionStatus,
-        lastConnectedAt: nextTag.lastConnectedAt,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      });
-      pushFeedItem({
-        level: "success",
-        title: "New BLE tag added",
-        message: `${trimmedName} was added for ${trimmedLocation}.`,
-      });
-      pushToast("Tag added.");
-      return true;
-    } catch (error) {
-      console.error(error);
-      pushToast("Failed to add tag.");
-      return false;
-    }
-  }
-
-  async function handleUpdateTag(
-    id: string,
-    patch: Partial<Pick<BleTag, "name" | "location" | "hardwareId">>,
-  ) {
-    const target = bleTags.find((item) => item.id === id);
-    if (!target) return;
-
-    const nextName = patch.name?.trim() ?? target.name;
-    const nextLocation = patch.location?.trim() ?? target.location;
-    const nextHardwareId = patch.hardwareId?.trim() ?? target.hardwareId;
-
-    if (!nextName || !nextLocation || !nextHardwareId) {
-      pushToast("Tag name, location, and device ID cannot be empty.");
-      return;
-    }
-
-    try {
-      await updateFamilyPath(familyId, `ble_tags/${id}`, {
-        name: nextName,
-        location: nextLocation,
-        hardwareId: nextHardwareId,
-        updatedAt: Date.now(),
-      });
-    } catch (error) {
-      console.error(error);
-      pushToast("Failed to update tag.");
-      return;
-    }
-
-    pushFeedItem({
-      level: "info",
-      title: "BLE tag updated",
-      message: `${nextName} is now assigned to ${nextLocation}.`,
-    });
-    pushToast("Tag updated.");
-  }
-
-  async function handleDeleteTag(id: string) {
-    const target = bleTags.find((item) => item.id === id);
-    if (!target) return;
-
-    try {
-      await updateFamilyPath(familyId, "ble_tags", {
-        [id]: null,
-      });
-    } catch (error) {
-      console.error(error);
-      pushToast("Failed to delete tag.");
-      return;
-    }
-
-    pushFeedItem({
-      level: "warning",
-      title: "BLE tag removed",
-      message: `${target.name} was removed from the caregiver dashboard.`,
-    });
-    pushToast("Tag deleted.");
-  }
-
-  async function handleConnectTag(id: string) {
-    const target = bleTags.find((item) => item.id === id);
-    if (!target) return;
-    if (!target.hardwareId.trim()) {
-      pushToast("Add a device ID before connecting this tag.");
-      return;
-    }
-
-    try {
-      await updateFamilyPath(familyId, `ble_tags/${id}`, {
-        connectionStatus: "connected",
-        lastConnectedAt: Date.now(),
-        updatedAt: Date.now(),
-      });
-      pushFeedItem({
-        level: "success",
-        title: "BLE tag connected",
-        message: `${target.name} is now paired with device ID ${target.hardwareId}.`,
-      });
-      pushToast("Tag marked as connected.");
-    } catch (error) {
-      console.error(error);
-      pushToast("Failed to connect tag.");
-    }
-  }
-
-  async function handleDisconnectTag(id: string) {
-    const target = bleTags.find((item) => item.id === id);
-    if (!target) return;
-
-    try {
-      await updateFamilyPath(familyId, `ble_tags/${id}`, {
-        connectionStatus: "disconnected",
-        updatedAt: Date.now(),
-      });
-      pushFeedItem({
-        level: "warning",
-        title: "BLE tag disconnected",
-        message: `${target.name} is no longer paired to the active caregiver session.`,
-      });
-      pushToast("Tag disconnected.");
-    } catch (error) {
-      console.error(error);
-      pushToast("Failed to disconnect tag.");
-    }
-  }
-
-  function handleLogoutRequest() {
-    if (!authUser) {
-      pushToast("There is no active caregiver session.");
-      return;
-    }
-    setShowLogoutModal(true);
-  }
-
-  function handleLogoutConfirmed() {
-    setShowLogoutModal(false);
-    void signOutCaregiver()
-      .then(() => {
-        setSettingsPage("root");
-        pushToast("Logged out successfully.");
-      })
-      .catch((error) => {
-        console.error(error);
-        pushToast("Failed to log out. Please try again.");
-      });
-  }
-
-  async function handleSimulateLocation(status: "in_home" | "out_of_home") {
-    try {
-      const isOutside = status === "out_of_home";
-      await updateFamilyPath(familyId, "elder", {
-        status: status,
-        locationLabel: isOutside ? "Outside Safe Zone" : "In Home",
-        lastSeenAt: Date.now(),
-        updatedAt: Date.now(),
-      });
-
-      await updateFamilyPath(familyId, "tracker_alert", {
-        is_active: isOutside,
-        type: isOutside ? "out_of_safe_zone" : null,
-        message: isOutside
-          ? "Wearable tracker detected elder outside the geofence!"
-          : "Elder is safe inside the home zone.",
-        severity: isOutside ? "danger" : "normal",
-        safeZoneStatus: isOutside ? "outside" : "inside",
-        source: "BLE tracker",
-        updatedAt: Date.now(),
-      });
-
-      await pushFeedItem({
-        level: isOutside ? "danger" : "success",
-        title: isOutside ? "Geofence Breach" : "Elder Returned Home",
-        message: isOutside
-          ? "Warning: Wearable tracker detected elder crossed the geofence zone!"
-          : "Elder is safe inside the home zone.",
-      });
-
-      pushToast(`Simulated location set to: ${isOutside ? "Away" : "Home"}`);
-    } catch (err) {
-      console.error(err);
-      pushToast("Failed to simulate location.");
-    }
-  }
-
-  async function handleSimulateHeartRate(bpm: number, label: "Normal" | "High" | "Low") {
-    try {
-      const isNormal = label === "Normal";
-      const status = isNormal ? "Normal" : label === "High" ? "Dangerously High" : "Dangerously Low";
-
-      await updateFamilyPath(familyId, "elder/vitals", {
-        heartRateBpm: bpm,
-        status: status,
-        isOverride: true,
-        updatedAt: Date.now(),
-      });
-
-      await pushFeedItem({
-        level: isNormal ? "success" : "danger",
-        title: isNormal ? "Vitals Normal" : "Vitals Warning",
-        message: isNormal
-          ? `Heart rate normalized at ${bpm} bpm.`
-          : `Alert: Heart rate detected at ${bpm} bpm (${status})!`,
-      });
-
-      pushToast(`Simulated heart rate: ${bpm} BPM (${label})`);
-    } catch (err) {
-      console.error(err);
-      pushToast("Failed to simulate heart rate.");
-    }
-  }
-
-  async function handleResetSimulation() {
-    try {
-      await updateFamilyPath(familyId, "elder/vitals", {
-        isOverride: false,
-        updatedAt: Date.now(),
-      });
-      await handleSimulateLocation("in_home");
-      pushToast("Simulation reset to automatic Kiosk mode.");
-    } catch (err) {
-      console.error(err);
-      pushToast("Failed to reset simulation.");
-    }
-  }
-
-  async function handleUpdateCaregiverProfileName(newName: string) {
-    setProfileName(newName);
-    if (authUser) {
-      try {
-        const { ref: dbRef, update: dbUpdate } = await import("firebase/database");
-        const userProfileRef = dbRef(database, `users/${authUser.uid}`);
-        await dbUpdate(userProfileRef, {
-          name: newName,
-        });
-      } catch (err) {
-        console.error("Failed to update user profile name in DB:", err);
-      }
-    }
-  }
-
-  async function handleRerunOnboarding() {
-    try {
-      setOnboardingCompleted(false);
-      await updateFamilyPath(familyId, "onboarding_completed", {
-        onboarding_completed: false,
-      });
-      await updateFamilyPath(familyId, "kiosk", {
-        online: false,
-        updatedAt: Date.now(),
-      });
-      pushToast("Onboarding setup wizard activated. Kiosk will reset to pairing screen.");
-    } catch (err) {
-      console.error(err);
-      pushToast("Setup wizard activated.");
-    }
-  }
-
-  function renderMainContent() {
-    const showOnboarding = authUser !== null && onboardingCompleted === false;
-
-    if (showOnboarding) {
-      return (
-        <div className="mx-auto w-full max-w-[600px] py-6">
-          <OnboardingWizard
-            familyId={familyId}
-            pushToast={pushToast}
-            caregiverName={profileName}
-            onComplete={() => {}}
-          />
-        </div>
-      );
-    }
-
-    if (activeTab === "history") {
-      return (
-        <ManagementScreen
-          routines={routines}
-          bleTags={bleTags}
-          feedItems={feedItems}
-          dataLoading={dataLoading}
-          onAddNew={() => void handleAddNew()}
-          onModeChange={handleModeChange}
-          onFieldChange={handleFieldChange}
-          onTrigger={(id) => void handleTrigger(id)}
-          onReset={(id) => void handleReset(id)}
-          onSave={(id) => void handleSave(id)}
-          onOpenEmergency={() => setShowEmergencyModal(true)}
-          onToggleTag={(id) => void handleToggleTag(id)}
-          onAddTag={(name, location, hardwareId) => handleAddTag(name, location, hardwareId)}
-          onUpdateTag={(id, patch) => void handleUpdateTag(id, patch)}
-          onDeleteTag={(id) => void handleDeleteTag(id)}
-          onConnectTag={(id) => void handleConnectTag(id)}
-          onDisconnectTag={(id) => void handleDisconnectTag(id)}
-          onClearCompleted={() => void handleClearCompleted()}
-        />
-      );
-    }
-
-    if (activeTab === "settings") {
-      return (
-        <SettingsScreen
-          page={settingsPage}
-          settings={demoSettings}
-          authUser={authUser}
-          authLoading={authLoading}
-          profileName={profileName}
-          profileRole={profileRole}
-          profileEmail={profileEmail}
-          linkedFamilyMembers={linkedFamilyMembers}
-          kioskName={kiosk.name || "Living Room Kiosk"}
-          kioskStatus={kiosk.online ? "Demo connected" : "Offline in demo"}
-          familyId={familyId}
-          onOpenPage={setSettingsPage}
-          onBack={() => setSettingsPage("root")}
-          onUpdateSettings={setDemoSettings}
-          onRequestLogout={handleLogoutRequest}
-          onUpdateCaregiverName={handleUpdateCaregiverProfileName}
-          onRerunOnboarding={handleRerunOnboarding}
-          pushToast={pushToast}
-        />
-      );
-    }
-
-    return (
-      <HomeScreen
-        elder={elder}
-        kiosk={kiosk}
-        trackerAlert={trackerAlert}
-        completedRoutines={completedRoutines}
-        upcomingRoutine={upcomingRoutine}
-        dataLoading={dataLoading}
-        onSimulateLocation={handleSimulateLocation}
-        onSimulateHeartRate={handleSimulateHeartRate}
-        onResetSimulation={handleResetSimulation}
-      />
-    );
-  }
-
-  const showOnboarding = authUser !== null && onboardingCompleted === false;
+  };
 
   return (
     <div className="min-h-screen bg-shell text-slate-900">
-      <div className="mx-auto w-full max-w-[1720px] px-4 pb-32 pt-4 sm:px-6 lg:px-8 lg:pt-6">
-        <Header avatarSrc={caregiverAvatar} onBellClick={() => pushToast("No new notifications.")} />
-        <main className="space-y-8">{renderMainContent()}</main>
+      <div className="mx-auto w-full max-w-screen-2xl px-3 pb-28 pt-3 max-[420px]:px-2.5 max-[420px]:pb-24 sm:px-6 lg:px-8 lg:pb-36 lg:pt-6">
+        <Header onBellClick={handleBell} alertCount={alerts.length} />
+
+        <main className="space-y-5 sm:space-y-8">
+          <BackendStatusCard backendConnected={backendConnected} />
+
+          {activeTab === "home" ? (
+            <>
+              <section className="space-y-3">
+                <p className="text-sm font-semibold text-slate-600 sm:text-lg">Welcome back,</p>
+                <h1 className="text-[clamp(1.9rem,7vw,3.625rem)] font-extrabold tracking-tight text-slate-900 max-[420px]:text-[1.8rem]">
+                  Good morning, Sarah
+                </h1>
+              </section>
+
+              <StatusCard />
+
+              <HelpAlertsCard alerts={alerts} onResolve={handleResolveAlert} />
+
+              <ReminderEffectivenessCard effectiveness={effectiveness} suggestion={suggestion} />
+
+              <section className="space-y-4 sm:space-y-5">
+                <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-end sm:gap-4">
+                  <h2 className="text-[clamp(1.5rem,5.5vw,2.5rem)] font-extrabold tracking-tight text-slate-900 max-[420px]:text-[1.4rem]">
+                    Task Occurrences
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={handleAddNew}
+                    className="text-base font-bold text-brand transition hover:text-blue-700 sm:text-lg"
+                  >
+                    Add New
+                  </button>
+                </div>
+
+                <div className="space-y-6">
+                  {routines.map((routine) => (
+                    <RoutineCard
+                      key={routine.id}
+                      routine={routine}
+                      onModeChange={handleModeChange}
+                      onFieldChange={handleFieldChange}
+                      onTrigger={handleTrigger}
+                      onSave={handleSave}
+                      completedCount={completedCount}
+                    />
+                  ))}
+                </div>
+              </section>
+
+              <TrackerAlertsCard />
+
+              <EmergencySection onOpenModal={() => setShowEmergencyModal(true)} />
+            </>
+          ) : null}
+
+          {activeTab === "history" ? (
+            <>
+              <section className="space-y-3">
+                <p className="text-sm font-semibold text-slate-600 sm:text-lg">Recorded events</p>
+                <h1 className="text-[clamp(1.9rem,7vw,3.625rem)] font-extrabold tracking-tight text-slate-900 max-[420px]:text-[1.8rem]">
+                  Care History
+                </h1>
+              </section>
+              <ReminderEffectivenessCard effectiveness={effectiveness} suggestion={suggestion} />
+              <CareTimelineCard
+                routines={routines}
+                events={timelineEvents}
+                filters={timelineFilters}
+                onFiltersChange={setTimelineFilters}
+              />
+            </>
+          ) : null}
+
+          {activeTab === "settings" ? (
+            <SettingsPanel
+              backendConnected={backendConnected}
+              routines={routines}
+              alertCount={alerts.length}
+              eventCount={allTimelineEvents.length}
+            />
+          ) : null}
+        </main>
       </div>
 
-      {!showOnboarding ? <BottomNavigation activeTab={activeTab} onChange={handleBottomNav} /> : null}
+      <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
 
       {toast ? <Toast message={toast.message} onDismiss={() => setToast(null)} /> : null}
 
@@ -1070,1574 +563,1116 @@ export default function App() {
           body="This will notify emergency services and local responders immediately."
           confirmLabel="Send Alert"
           onCancel={() => setShowEmergencyModal(false)}
-          onConfirm={() => void handleSendEmergency()}
-        />
-      ) : null}
-
-      {showLogoutModal ? (
-        <ConfirmationModal
-          title="Log out of caregiver account?"
-          body="This signs the caregiver out of Firebase Authentication and returns the app to guest demo mode."
-          confirmLabel="Log Out"
-          onCancel={() => setShowLogoutModal(false)}
-          onConfirm={handleLogoutConfirmed}
+          onConfirm={handleSendEmergency}
         />
       ) : null}
     </div>
   );
 }
 
-function SettingsScreen({
-  page,
-  settings,
-  authUser,
-  authLoading,
-  profileName,
-  profileRole,
-  profileEmail,
-  linkedFamilyMembers,
-  kioskName,
-  kioskStatus,
-  familyId,
-  onOpenPage,
-  onBack,
-  onUpdateSettings,
-  onRequestLogout,
-  onUpdateCaregiverName,
-  onRerunOnboarding,
-  pushToast,
+function Header({
+  onBellClick,
+  alertCount,
 }: {
-  page: SettingsPage;
-  settings: DemoSettingsState;
-  authUser: User | null;
-  authLoading: boolean;
-  profileName: string;
-  profileRole: string;
-  profileEmail: string;
-  linkedFamilyMembers: string[];
-  kioskName: string;
-  kioskStatus: string;
-  familyId: string;
-  onOpenPage: (page: SettingsPage) => void;
-  onBack: () => void;
-  onUpdateSettings: Dispatch<SetStateAction<DemoSettingsState>>;
-  onRequestLogout: () => void;
-  onUpdateCaregiverName: (name: string) => Promise<void>;
-  onRerunOnboarding: () => Promise<void>;
-  pushToast: (message: string) => void;
-}) {
-  if (page !== "root") {
-    return (
-      <SettingsDetailPage
-        page={page}
-        settings={settings}
-        authUser={authUser}
-        profileName={profileName}
-        profileRole={profileRole}
-        profileEmail={profileEmail}
-        linkedFamilyMembers={linkedFamilyMembers}
-        familyId={familyId}
-        onBack={onBack}
-        onUpdateSettings={onUpdateSettings}
-        onUpdateCaregiverName={onUpdateCaregiverName}
-        pushToast={pushToast}
-      />
-    );
-  }
-
-  const enabledNotificationCount = Object.values(settings.notifications).filter(Boolean).length;
-
-  return (
-    <section className="space-y-6">
-      <div className="card-shell overflow-hidden p-0">
-        <div className="bg-[radial-gradient(circle_at_top_left,_rgba(139,108,255,0.16),_transparent_34%),linear-gradient(135deg,#ffffff_0%,#f4efff_100%)] px-6 py-7 sm:px-8 sm:py-8">
-          <div className="inline-flex rounded-full bg-active/10 px-4 py-2 text-sm font-extrabold uppercase tracking-[0.22em] text-[#5a34cf]">
-            Settings
-          </div>
-          <h1 className="mt-4 text-4xl font-extrabold tracking-tight text-slate-900 sm:text-5xl">
-            Settings
-          </h1>
-          <p className="mt-3 max-w-3xl text-lg font-medium leading-8 text-slate-600">
-            Manage your account, kiosk, alerts, and app preferences.
-          </p>
-        </div>
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-[1.08fr_1fr]">
-        <div className="space-y-6">
-          <ProfileCard
-            onViewProfile={() => onOpenPage("profile")}
-            isLoggedIn={!!authUser}
-            name={profileName}
-            role={profileRole}
-            email={profileEmail}
-          />
-          {authLoading ? (
-            <div className="rounded-[20px] bg-lavender px-5 py-4 text-base font-semibold text-slate-600">
-              Checking caregiver session...
-            </div>
-          ) : null}
-
-          <SettingsSection title="Account">
-            <SettingsTile
-              icon={UserRound}
-              title="Profile"
-              subtitle="View caregiver details"
-              onClick={() => onOpenPage("profile")}
-            />
-            <SettingsTile
-              icon={LogIn}
-              title="Login / Sign up"
-              subtitle={authUser ? `Signed in as ${profileEmail}` : "Open caregiver authentication"}
-              onClick={() => onOpenPage("login")}
-            />
-            <SettingsTile
-              icon={Users}
-              title="Linked family members"
-              subtitle={`${linkedFamilyMembers.length} connected in this household`}
-              onClick={() => onOpenPage("linked-family")}
-            />
-            <SettingsTile
-              icon={LogOut}
-              title="Log out"
-              subtitle={authUser ? "Sign out of the current caregiver account" : "No active session"}
-              onClick={onRequestLogout}
-            />
-          </SettingsSection>
-
-          <SettingsSection title="Kiosk">
-            <SettingsTile
-              icon={Link2}
-              title="Home kiosk connection"
-              subtitle={`Connected to ${kioskName}`}
-              onClick={() => onOpenPage("kiosk-connection")}
-            />
-            <SettingsTile
-              icon={MonitorSmartphone}
-              title="Kiosk display name"
-              subtitle={kioskName}
-              onClick={() => pushToast("Kiosk renaming coming soon.")}
-            />
-            <SettingsTile
-              icon={MonitorSmartphone}
-              title="Pair new kiosk"
-              subtitle="Enter the 6-digit code shown on the TV/tablet"
-              onClick={() => onOpenPage("kiosk-pairing")}
-            />
-            <SettingsTile
-              icon={CheckCircle2}
-              title="Kiosk status"
-              subtitle={kioskStatus}
-              onClick={() => pushToast(`Kiosk status: ${kioskStatus}.`)}
-            />
-          </SettingsSection>
-
-          <SettingsSection title="Care settings">
-            <SettingsTile
-              icon={UserRound}
-              title="Elderly profile"
-              subtitle="Edit elder and caregiver names"
-              onClick={() => onOpenPage("elderly-profile")}
-            />
-            <SettingsTile
-              icon={Users}
-              title="Emergency contacts"
-              subtitle="2 emergency contacts saved"
-              onClick={() => onOpenPage("emergency-contacts")}
-            />
-            <SettingsTile
-              icon={Clock3}
-              title="Reminder defaults"
-              subtitle="Medication and routine preferences"
-              onClick={() => onOpenPage("reminder-defaults")}
-            />
-            <SettingsTile
-              icon={HeartPulse}
-              title="Tracker settings"
-              subtitle="Wearable and movement alerts"
-              onClick={() => onOpenPage("tracker-settings")}
-            />
-            <SettingsTile
-              icon={MapPinned}
-              title="Geofence settings"
-              subtitle="Home safe zone configuration"
-              onClick={() => onOpenPage("geofence-settings")}
-            />
-          </SettingsSection>
-
-          <SettingsSection title="Demo controls">
-            <SettingsTile
-              icon={Sparkles}
-              title="Re-run Setup Wizard"
-              subtitle="Show the 3-step kiosk & profile onboarding guide"
-              onClick={onRerunOnboarding}
-            />
-          </SettingsSection>
-        </div>
-
-        <div className="space-y-6">
-          <SettingsSection title="Preferences">
-            <SettingsTile
-              icon={Globe}
-              title="Language"
-              subtitle={settings.language}
-              onClick={() => onOpenPage("language")}
-            />
-            <SettingsTile
-              icon={Palette}
-              title="Appearance"
-              subtitle={settings.appearance}
-              onClick={() => onOpenPage("appearance")}
-            />
-            <SettingsTile
-              icon={Bell}
-              title="Notifications"
-              subtitle={`${enabledNotificationCount} enabled`}
-              onClick={() => onOpenPage("notifications")}
-            />
-            <SettingsTile
-              icon={Clock3}
-              title="Time format"
-              subtitle={settings.timeFormat}
-              onClick={() => onOpenPage("time-format")}
-            />
-          </SettingsSection>
-
-          <SettingsSection title="Support">
-            <SettingsTile
-              icon={Info}
-              title="Help Centre"
-              subtitle="FAQs and setup guidance"
-              onClick={() => onOpenPage("help-centre")}
-            />
-            <SettingsTile
-              icon={Bell}
-              title="Contact support"
-              subtitle="Get help with the app"
-              onClick={() => onOpenPage("contact-support")}
-            />
-            <SettingsTile
-              icon={Info}
-              title="About Remember.For.Me"
-              subtitle="Version 1.0.0"
-              onClick={() => onOpenPage("about")}
-            />
-            <SettingsTile
-              icon={ShieldAlert}
-              title="Privacy Policy"
-              subtitle="Demo placeholder"
-              onClick={() => onOpenPage("privacy")}
-            />
-            <SettingsTile
-              icon={Info}
-              title="Terms of Service"
-              subtitle="Demo placeholder"
-              onClick={() => onOpenPage("terms")}
-            />
-          </SettingsSection>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function SettingsDetailPage({
-  page,
-  settings,
-  authUser,
-  profileName,
-  profileRole,
-  profileEmail,
-  linkedFamilyMembers,
-  familyId,
-  onBack,
-  onUpdateSettings,
-  onUpdateCaregiverName,
-  pushToast,
-}: {
-  page: SettingsPage;
-  settings: DemoSettingsState;
-  authUser: User | null;
-  profileName: string;
-  profileRole: string;
-  profileEmail: string;
-  linkedFamilyMembers: string[];
-  familyId: string;
-  onBack: () => void;
-  onUpdateSettings: Dispatch<SetStateAction<DemoSettingsState>>;
-  onUpdateCaregiverName: (name: string) => Promise<void>;
-  pushToast: (message: string) => void;
-}) {
-  const simplePages: Record<
-    Exclude<
-      SettingsPage,
-      "root" | "language" | "appearance" | "notifications" | "time-format" | "login"
-    >,
-    { title: string; subtitle: string; body: ReactNode }
-  > = {
-    profile: {
-      title: "Profile",
-      subtitle: authUser ? "Authenticated caregiver profile" : "Guest caregiver profile",
-      body: (
-        <div className="space-y-4">
-          <div className="rounded-[22px] bg-lavender p-5">
-            <p className="text-sm font-extrabold uppercase tracking-[0.22em] text-[#5a34cf]">
-              Caregiver
-            </p>
-            <h3 className="mt-3 text-3xl font-extrabold text-slate-900">{profileName}</h3>
-            <p className="mt-2 text-lg font-semibold text-slate-600">{profileRole}</p>
-            <p className="mt-1 text-base font-semibold text-slate-500">{profileEmail}</p>
-          </div>
-          <div className="rounded-[22px] border border-slate-200/80 bg-white p-5">
-            <p className="text-base leading-8 text-slate-700">
-              {authUser
-                ? "This caregiver profile is being read from Firebase Realtime Database and can be extended later with editable fields, avatar upload, and permissions."
-                : "You are viewing guest demo data. Sign in to bind the caregiver profile to a real Firebase Auth account."}
-            </p>
-          </div>
-        </div>
-      ),
-    },
-    "linked-family": {
-      title: "Linked family members",
-      subtitle: "Care circle for this demo household",
-      body: (
-        <div className="space-y-3">
-          {linkedFamilyMembers.map((member) => (
-            <div key={member} className="rounded-[20px] bg-lavender px-5 py-4">
-              <p className="text-lg font-extrabold text-slate-900">{member}</p>
-            </div>
-          ))}
-        </div>
-      ),
-    },
-    "kiosk-connection": {
-      title: "Home kiosk connection",
-      subtitle: "Living Room Kiosk",
-      body: (
-        <p className="text-lg font-medium leading-8 text-slate-700">
-          The Kiosk app is linked to this caregiver account via a 6-digit PIN.
-          Use <strong>Pair new kiosk</strong> in the Kiosk section above to connect
-          a new TV or tablet screen.
-        </p>
-      ),
-    },
-    "elderly-profile": {
-      title: "Elderly profile",
-      subtitle: "Names synced live to the Kiosk screen",
-      body: (
-        <ElderlyProfileCard
-          familyId={familyId}
-          pushToast={pushToast}
-          onUpdateCaregiverName={onUpdateCaregiverName}
-        />
-      ),
-    },
-    "emergency-contacts": {
-      title: "Emergency contacts",
-      subtitle: "Family emergency contact list",
-      body: (
-        <div className="space-y-3">
-          {["Anna Nguyen - Daughter", "Mr. Minh Tran - Neighbor"].map((contact) => (
-            <div key={contact} className="rounded-[20px] bg-lavender px-5 py-4">
-              <p className="text-lg font-extrabold text-slate-900">{contact}</p>
-            </div>
-          ))}
-        </div>
-      ),
-    },
-    "reminder-defaults": {
-      title: "Reminder defaults",
-      subtitle: "Medication and routine preferences",
-      body: (
-        <p className="text-lg font-medium leading-8 text-slate-700">
-          Default reminder timing, follow-up intervals, and voice prompt behavior
-          will be configured here for both caregiver and kiosk surfaces.
-        </p>
-      ),
-    },
-    "tracker-settings": {
-      title: "Tracker settings",
-      subtitle: "Wearable and movement alerts",
-      body: (
-        <p className="text-lg font-medium leading-8 text-slate-700">
-          Tracker settings control wearable syncing, inactivity thresholds,
-          and safety alerts. Real hardware integration is required for live tracking.
-        </p>
-      ),
-    },
-    "geofence-settings": {
-      title: "Geofence settings",
-      subtitle: "Home safe zone configuration",
-      body: (
-        <p className="text-lg font-medium leading-8 text-slate-700">
-          Safe zone boundaries and exit alerts will be powered by GPS in a future update.
-          Use the BLE tags in Manage as a proximity alternative.
-        </p>
-      ),
-    },
-    "help-centre": {
-      title: "Help Centre",
-      subtitle: "Setup guidance and FAQs",
-      body: (
-        <p className="text-lg font-medium leading-8 text-slate-700">
-          For setup help, kiosk pairing instructions, and troubleshooting,
-          contact the Remember.For.Me support team.
-        </p>
-      ),
-    },
-    "contact-support": {
-      title: "Contact support",
-      subtitle: "Get help with the app",
-      body: (
-        <p className="text-lg font-medium leading-8 text-slate-700">
-          Reach the support team via email at <strong>support@rememberforme.app</strong>.
-          We aim to respond within 24 hours.
-        </p>
-      ),
-    },
-    about: {
-      title: "About Remember.For.Me",
-      subtitle: "Version 1.0.0",
-      body: (
-        <p className="text-lg font-medium leading-8 text-slate-700">
-          Remember.For.Me is an ambient care ecosystem connecting caregivers to
-          in-home kiosk screens, helping elderly family members stay on track
-          with daily routines through gentle voice reminders.
-        </p>
-      ),
-    },
-    privacy: {
-      title: "Privacy Policy",
-      subtitle: "How your data is protected",
-      body: (
-        <p className="text-lg font-medium leading-8 text-slate-700">
-          All caregiver and care recipient data is stored securely in Firebase
-          and is only accessible to authenticated caregiver accounts linked to
-          the same family group.
-        </p>
-      ),
-    },
-    terms: {
-      title: "Terms of Service",
-      subtitle: "Usage agreement",
-      body: (
-        <p className="text-lg font-medium leading-8 text-slate-700">
-          By using Remember.For.Me you agree to use the platform solely for
-          lawful eldercare purposes. No medical or emergency services are
-          guaranteed by this application.
-        </p>
-      ),
-    },
-  };
-
-  if (page === "login") {
-    return (
-      <SettingsDetailLayout
-        title="Login / Sign up"
-        subtitle="Authenticate caregivers with Firebase email and password"
-        onBack={onBack}
-      >
-        <AuthCard
-          authUser={authUser}
-          profileName={profileName}
-          profileEmail={profileEmail}
-          pushToast={pushToast}
-        />
-      </SettingsDetailLayout>
-    );
-  }
-
-  if (page === "kiosk-pairing") {
-    return (
-      <SettingsDetailLayout
-        title="Pair New Kiosk"
-        subtitle="Enter the 6-digit code displayed on the TV or tablet screen"
-        onBack={onBack}
-      >
-        <KioskPairingCard familyId={familyId} pushToast={pushToast} />
-      </SettingsDetailLayout>
-    );
-  }
-
-  if (page === "language") {
-    return (
-      <SettingsDetailLayout
-        title="Language"
-        subtitle="Choose a display language for the caregiver app"
-        onBack={onBack}
-      >
-        <SelectableList
-          items={["English", "Vietnamese", "Chinese"]}
-          selected={settings.language}
-          onSelect={(value) =>
-            onUpdateSettings((current) => ({
-              ...current,
-              language: value as DemoSettingsState["language"],
-            }))
-          }
-        />
-      </SettingsDetailLayout>
-    );
-  }
-
-  if (page === "appearance") {
-    return (
-      <SettingsDetailLayout
-        title="Appearance"
-        subtitle="Choose how the app should look"
-        onBack={onBack}
-      >
-        <SelectableList
-          items={["Light", "Dark", "System"]}
-          selected={settings.appearance}
-          onSelect={(value) =>
-            onUpdateSettings((current) => ({
-              ...current,
-              appearance: value as DemoSettingsState["appearance"],
-            }))
-          }
-        />
-      </SettingsDetailLayout>
-    );
-  }
-
-  if (page === "time-format") {
-    return (
-      <SettingsDetailLayout
-        title="Time format"
-        subtitle="Choose how time is displayed"
-        onBack={onBack}
-      >
-        <SelectableList
-          items={["12-hour", "24-hour"]}
-          selected={settings.timeFormat}
-          onSelect={(value) =>
-            onUpdateSettings((current) => ({
-              ...current,
-              timeFormat: value as DemoSettingsState["timeFormat"],
-            }))
-          }
-        />
-      </SettingsDetailLayout>
-    );
-  }
-
-  if (page === "notifications") {
-    const entries = [
-      ["medicationReminders", "Medication reminders"],
-      ["routineReminders", "Routine reminders"],
-      ["trackerAlerts", "Tracker alerts"],
-      ["emergencyAlerts", "Emergency alerts"],
-      ["weeklySummary", "Weekly summary"],
-    ] as const;
-
-    return (
-      <SettingsDetailLayout
-        title="Notifications"
-        subtitle="Control which caregiver alerts stay enabled"
-        onBack={onBack}
-      >
-        <div className="card-shell p-4 sm:p-5">
-          <div className="divide-y divide-slate-200/80">
-            {entries.map(([key, label]) => (
-              <div
-                key={key}
-                className="flex items-center justify-between gap-4 px-2 py-4 sm:px-3"
-              >
-                <div>
-                  <h3 className="text-xl font-extrabold text-slate-900">{label}</h3>
-                  <p className="mt-1 text-sm font-semibold text-slate-500">
-                    {settings.notifications[key] ? "Enabled" : "Disabled"}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    onUpdateSettings((current) => ({
-                      ...current,
-                      notifications: {
-                        ...current.notifications,
-                        [key]: !current.notifications[key],
-                      },
-                    }))
-                  }
-                  className={`relative inline-flex h-8 w-16 items-center rounded-full transition ${
-                    settings.notifications[key] ? "bg-active" : "bg-slate-300"
-                  }`}
-                  aria-label={label}
-                >
-                  <span
-                    className={`inline-block h-6 w-6 transform rounded-full bg-white transition ${
-                      settings.notifications[key] ? "translate-x-9" : "translate-x-1"
-                    }`}
-                  />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      </SettingsDetailLayout>
-    );
-  }
-
-  const content = simplePages[page as keyof typeof simplePages];
-
-  return (
-    <SettingsDetailLayout title={content.title} subtitle={content.subtitle} onBack={onBack}>
-      <div className="card-shell p-6 sm:p-8">{content.body}</div>
-    </SettingsDetailLayout>
-  );
-}
-
-function SettingsDetailLayout({
-  title,
-  subtitle,
-  onBack,
-  children,
-}: {
-  title: string;
-  subtitle: string;
-  onBack: () => void;
-  children: ReactNode;
+  onBellClick: () => void;
+  alertCount: number;
 }) {
   return (
-    <section className="space-y-6">
-      <div className="card-shell p-6 sm:p-8">
-        <button
-          type="button"
-          onClick={onBack}
-          className="inline-flex items-center gap-2 rounded-full bg-lavender px-4 py-2 text-sm font-extrabold uppercase tracking-[0.22em] text-[#5a34cf] transition hover:bg-[#e4ddff]"
-        >
-          <ChevronLeft className="h-4 w-4" />
-          Back
-        </button>
-        <h1 className="mt-5 text-4xl font-extrabold tracking-tight text-slate-900 sm:text-5xl">
-          {title}
-        </h1>
-        <p className="mt-3 max-w-3xl text-lg font-medium leading-8 text-slate-600">
-          {subtitle}
-        </p>
-      </div>
-
-      {children}
-    </section>
-  );
-}
-
-function ProfileCard({
-  onViewProfile,
-  isLoggedIn,
-  name,
-  role,
-  email,
-}: {
-  onViewProfile: () => void;
-  isLoggedIn: boolean;
-  name: string;
-  role: string;
-  email: string;
-}) {
-  return (
-    <section className="card-shell p-6 sm:p-8">
-      <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-5">
-          <div className="flex h-20 w-20 items-center justify-center rounded-[24px] bg-active/10">
-            <UserRound className="h-10 w-10 text-active" />
-          </div>
-          <div>
-            <h2 className="text-3xl font-extrabold text-slate-900">{name}</h2>
-            <p className="mt-1 text-lg font-semibold text-slate-600">{role}</p>
-            <p className="mt-1 text-base font-semibold text-slate-500">{email}</p>
-          </div>
+    <header className="mb-5 flex items-center justify-between gap-2 sm:mb-8 sm:gap-4">
+      <div className="flex min-w-0 items-center gap-2.5 sm:gap-5">
+        <img
+          src={caregiverAvatar}
+          alt="Caregiver avatar"
+          className="h-9 w-9 shrink-0 rounded-full border-[3px] border-brand object-cover max-[420px]:h-8 max-[420px]:w-8 sm:h-16 sm:w-16"
+        />
+        <div className="min-w-0 text-[clamp(1.25rem,7vw,4.25rem)] font-black leading-none tracking-tight text-brand max-[420px]:text-[1.15rem]">
+          Remember.For.Me
         </div>
-
-        <div className="space-y-3 sm:text-right">
-          <div
-            className={`inline-flex rounded-full px-4 py-2 text-sm font-extrabold uppercase tracking-[0.22em] ${
-              isLoggedIn ? "bg-[#e9f6eb] text-action" : "bg-[#f3ecff] text-[#5a34cf]"
-            }`}
-          >
-            {isLoggedIn ? "Signed in" : "Guest mode"}
-          </div>
-          <div>
-            <button
-              type="button"
-              onClick={onViewProfile}
-              className="inline-flex items-center gap-2 rounded-full bg-active px-5 py-3 text-lg font-bold text-white transition hover:bg-[#7a5df0]"
-            >
-              View profile
-              <ChevronRight className="h-5 w-5" />
-            </button>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function AuthCard({
-  authUser,
-  profileName,
-  profileEmail,
-  pushToast,
-}: {
-  authUser: User | null;
-  profileName: string;
-  profileEmail: string;
-  pushToast: (message: string) => void;
-}) {
-  const [mode, setMode] = useState<"login" | "signup">("login");
-  const [displayName, setDisplayName] = useState(profileName === defaultProfile.name ? "" : profileName);
-  const [email, setEmail] = useState(authUser?.email || profileEmail || "");
-  const [password, setPassword] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  useEffect(() => {
-    setEmail(authUser?.email || profileEmail || "");
-    if (authUser && profileName !== defaultProfile.name) {
-      setDisplayName(profileName);
-    }
-  }, [authUser, profileEmail, profileName]);
-
-  async function handleSubmit() {
-    if (!email.trim() || !password.trim()) {
-      pushToast("Email and password are required.");
-      return;
-    }
-
-    if (mode === "signup" && !displayName.trim()) {
-      pushToast("Display name is required for sign up.");
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      if (mode === "login") {
-        await signInCaregiver(email.trim(), password);
-        pushToast("Signed in successfully.");
-      } else {
-        await signUpCaregiver(email.trim(), password, displayName.trim());
-        pushToast("Account created and signed in.");
-      }
-      setPassword("");
-    } catch (error: any) {
-      console.error(error);
-      pushToast(error?.message || "Authentication failed.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  if (authUser) {
-    return (
-      <div className="card-shell p-6 sm:p-8">
-        <div className="rounded-[22px] bg-lavender p-5">
-          <p className="text-sm font-extrabold uppercase tracking-[0.22em] text-[#5a34cf]">
-            Active session
-          </p>
-          <h3 className="mt-3 text-3xl font-extrabold text-slate-900">{profileName}</h3>
-          <p className="mt-2 text-lg font-semibold text-slate-600">{profileEmail}</p>
-          <p className="mt-2 text-base font-medium leading-7 text-slate-600">
-            This caregiver is authenticated with Firebase. Use the Log out row in Settings
-            to end the current session.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="card-shell p-6 sm:p-8">
-      <div className="inline-flex rounded-full bg-lavender p-1">
-        {(["login", "signup"] as const).map((item) => {
-          const active = mode === item;
-          return (
-            <button
-              key={item}
-              type="button"
-              onClick={() => setMode(item)}
-              className={`rounded-full px-5 py-2 text-sm font-extrabold uppercase tracking-[0.16em] transition ${
-                active ? "bg-white text-brand shadow-sm" : "text-slate-500"
-              }`}
-            >
-              {item === "login" ? "Login" : "Sign up"}
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="mt-6 space-y-4">
-        {mode === "signup" ? (
-          <label className="block space-y-2">
-            <span className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">
-              Display name
-            </span>
-            <input
-              value={displayName}
-              onChange={(event) => setDisplayName(event.target.value)}
-              className="h-16 w-full rounded-[18px] bg-lavender px-5 text-lg font-medium text-slate-800 outline-none"
-              placeholder="Hy Nguyen"
-            />
-          </label>
-        ) : null}
-
-        <label className="block space-y-2">
-          <span className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">
-            Email
-          </span>
-          <input
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            className="h-16 w-full rounded-[18px] bg-lavender px-5 text-lg font-medium text-slate-800 outline-none"
-            placeholder="hy@example.com"
-            type="email"
-          />
-        </label>
-
-        <label className="block space-y-2">
-          <span className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">
-            Password
-          </span>
-          <input
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            className="h-16 w-full rounded-[18px] bg-lavender px-5 text-lg font-medium text-slate-800 outline-none"
-            placeholder="At least 6 characters"
-            type="password"
-          />
-        </label>
       </div>
 
       <button
         type="button"
-        onClick={() => void handleSubmit()}
-        disabled={isSubmitting}
-        className="mt-6 inline-flex min-h-[68px] w-full items-center justify-center rounded-[20px] bg-active px-6 text-xl font-bold text-white transition hover:bg-[#7a5df0] disabled:cursor-not-allowed disabled:opacity-60"
+        onClick={onBellClick}
+        className="relative shrink-0 rounded-full p-2 text-brand transition hover:bg-white/70 sm:p-3"
+        aria-label="Notifications"
       >
-        {isSubmitting ? "Please wait..." : mode === "login" ? "Log in" : "Create account"}
+        <Bell className="h-5 w-5 stroke-[2.2] sm:h-7 sm:w-7" />
+        {alertCount > 0 ? (
+          <span className="absolute right-1 top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-[#c91818] px-1 text-[11px] font-bold text-white sm:right-2 sm:top-2">
+            {alertCount}
+          </span>
+        ) : null}
       </button>
-    </div>
+    </header>
   );
 }
 
-function SettingsSection({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
+function BackendStatusCard({ backendConnected }: { backendConnected: boolean }) {
   return (
-    <section className="card-shell p-5 sm:p-6">
-      <h2 className="text-3xl font-extrabold text-slate-900">{title}</h2>
-      <div className="mt-4 divide-y divide-slate-200/80">{children}</div>
+    <section
+      className={`card-shell p-4 sm:p-5 ${backendConnected ? "border-[#c9ebd0] bg-[#f3fff5]" : "border-[#f0d9a8] bg-[#fffaf0]"}`}
+    >
+      <p className={`text-sm font-bold sm:text-base ${backendConnected ? "text-[#1d6a34]" : "text-[#8a6400]"}`}>
+        {backendConnected
+          ? "Connected to Firebase backend."
+          : "Running with local verified demo data. Add VITE_FIREBASE_DATABASE_URL to connect the live backend."}
+      </p>
     </section>
   );
 }
 
-function SettingsTile({
+function StatusCard() {
+  return (
+    <section className="card-shell p-4 max-[420px]:p-3.5 sm:p-6 lg:p-8">
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 items-center gap-3 sm:gap-5">
+          <img
+            src={elderAvatar}
+            alt="Mom Eleanor"
+            className="h-14 w-14 shrink-0 rounded-full border-[3px] border-active object-cover max-[420px]:h-12 max-[420px]:w-12 sm:h-24 sm:w-24 sm:border-4"
+          />
+          <div className="min-w-0">
+            <h2 className="text-[clamp(1.25rem,5vw,2.625rem)] font-extrabold leading-tight text-slate-900 max-[420px]:text-[1.15rem]">
+              Mom (Eleanor)
+            </h2>
+            <p className="mt-1 text-[clamp(0.95rem,3.5vw,1.5rem)] font-medium text-slate-600 max-[420px]:text-[0.85rem]">
+              Home Monitoring Active
+            </p>
+          </div>
+        </div>
+
+        <div className="pill-button w-fit gap-2 bg-[#97f3a8] text-[11px] font-extrabold uppercase tracking-wide text-[#106228] sm:text-[15px]">
+          <span className="h-2.5 w-2.5 rounded-full bg-[#106228]" />
+          LIVE
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-3 sm:mt-8 sm:gap-4 md:grid-cols-2">
+        <InfoBox
+          icon={<House className="h-7 w-7 text-action sm:h-9 sm:w-9" />}
+          label="Current Location"
+          value={
+            <span className="inline-flex items-center gap-3 text-action">
+              <span className="h-5 w-5 rounded-full bg-gradient-to-b from-[#39d435] to-[#179420] shadow-[0_2px_8px_rgba(43,160,47,0.45)] sm:h-6 sm:w-6" />
+              In Home
+            </span>
+          }
+        />
+        <InfoBox
+          icon={<Clock3 className="h-7 w-7 text-brand sm:h-9 sm:w-9" />}
+          label="Latest check-in"
+          value="Help requested 2 minutes ago"
+        />
+      </div>
+
+      <div className="mt-5 flex flex-col gap-3 border-t border-slate-200 pt-4 md:flex-row md:items-center md:justify-between">
+        <div className="inline-flex min-w-0 items-center gap-2.5 text-sm font-semibold text-slate-700 sm:text-lg">
+          <HeartPulse className="h-5 w-5 shrink-0 text-active sm:h-6 sm:w-6" />
+          Vitals: Normal (72 bpm)
+        </div>
+        <button type="button" className="w-fit text-base font-extrabold text-brand transition hover:text-blue-700 sm:text-xl">
+          View Map &gt;
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function HelpAlertsCard({
+  alerts,
+  onResolve,
+}: {
+  alerts: CaregiverAlert[];
+  onResolve: (id: string) => void;
+}) {
+  return (
+    <section className="card-shell border-[#f4b5b5] bg-[#fff1f1] p-4 max-[420px]:p-3.5 sm:p-6 lg:p-8">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h2 className="text-[clamp(1.5rem,5vw,2.25rem)] font-extrabold text-[#8f1414] max-[420px]:text-[1.35rem]">
+            Help Requests
+          </h2>
+          <p className="mt-2 text-sm font-medium text-[#a64646] sm:text-lg">
+            Requests from the older adult appear here for caregiver follow-up.
+          </p>
+        </div>
+        <span className="pill-button bg-[#ffd6d6] text-[#8f1414]">
+          {alerts.length ? `${alerts.length} open` : "No open requests"}
+        </span>
+      </div>
+
+      <div className="mt-5 space-y-4">
+        {alerts.length ? (
+          alerts.map((alert) => (
+            <article
+              key={alert.id}
+              className="rounded-[20px] border border-[#efb0b0] bg-white p-4 shadow-sm sm:p-5"
+            >
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div className="space-y-2">
+                  <div className="inline-flex items-center gap-2 rounded-full bg-[#ffe2e2] px-3 py-1.5 text-sm font-bold text-[#8f1414]">
+                    <Siren className="h-4 w-4" />
+                    Needs help
+                  </div>
+                  <h3 className="text-xl font-extrabold text-slate-900">{alert.taskName}</h3>
+                  <p className="text-sm font-medium text-slate-600 sm:text-base">
+                    {alert.resident} • Scheduled {alert.scheduledTime}
+                  </p>
+                  <p className="text-sm font-medium text-slate-700 sm:text-base">
+                    Requested at {alert.requestedAt}
+                  </p>
+                  {alert.instructions ? (
+                    <p className="rounded-2xl bg-[#fff7de] px-3 py-2 text-sm font-medium text-[#7a5c00] sm:text-base">
+                      Caregiver note: {alert.instructions}
+                    </p>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onResolve(alert.id)}
+                  className="inline-flex min-h-[48px] items-center justify-center rounded-full bg-[#8f1414] px-5 text-sm font-bold text-white transition hover:bg-[#771010] sm:text-base"
+                >
+                  Mark handled
+                </button>
+              </div>
+            </article>
+          ))
+        ) : (
+          <div className="rounded-[20px] border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm font-medium text-slate-600 sm:text-base">
+            No active help requests.
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ReminderEffectivenessCard({
+  effectiveness,
+  suggestion,
+}: {
+  effectiveness: ReminderEffectiveness[];
+  suggestion: InsightSuggestion | null;
+}) {
+  const bestChannel = effectiveness
+    .filter((item) => item.remindersDelivered >= 5)
+    .sort((left, right) => right.completionRate - left.completionRate)[0];
+
+  return (
+    <section className="card-shell p-4 max-[420px]:p-3.5 sm:p-6 lg:p-8">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h2 className="text-[clamp(1.5rem,5vw,2.25rem)] font-extrabold text-slate-900 max-[420px]:text-[1.35rem]">
+            Reminder Effectiveness
+          </h2>
+          <p className="mt-2 text-sm font-medium text-slate-600 sm:text-lg">
+            Calculated from recorded reminder and response events only.
+          </p>
+        </div>
+        <span className="pill-button bg-[#eef2ff] text-[#3558c8]">
+          {bestChannel ? `Best recent: ${formatChannel(bestChannel.channel)}` : "Not enough data"}
+        </span>
+      </div>
+
+      <div className="mt-5 grid gap-3 md:grid-cols-3">
+        {effectiveness.map((item) => (
+          <article key={item.channel} className="info-box">
+            <p className="text-sm font-bold text-slate-600">{formatChannel(item.channel)}</p>
+            <p className="mt-2 text-2xl font-extrabold text-slate-900">
+              {item.remindersDelivered >= 5 ? `${Math.round(item.completionRate * 100)}%` : "Not enough data"}
+            </p>
+            <p className="mt-1 text-sm font-medium text-slate-600">
+              {item.remindersDelivered} observations
+            </p>
+            <p className="mt-3 text-sm font-medium text-slate-700">
+              Median response: {item.medianResponseMinutes == null ? "n/a" : `${item.medianResponseMinutes} min`}
+            </p>
+          </article>
+        ))}
+      </div>
+
+      {suggestion ? (
+        <div className="mt-5 rounded-[20px] border border-[#d7e3ff] bg-[#f6f9ff] p-4">
+          <div className="flex items-start gap-3">
+            <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-[#3558c8]" />
+            <div>
+              <p className="text-sm font-bold text-[#3558c8]">{suggestion.title}</p>
+              <p className="mt-1 text-sm font-medium text-slate-700">{suggestion.message}</p>
+              <p className="mt-2 text-xs font-medium text-slate-500">
+                Requires caregiver approval. Based on recorded interactions only.
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-5 rounded-[20px] border border-dashed border-slate-300 bg-slate-50 p-4 text-sm font-medium text-slate-600">
+          Not enough data yet to compare reminder methods.
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CareTimelineCard({
+  routines,
+  events,
+  filters,
+  onFiltersChange,
+}: {
+  routines: Routine[];
+  events: TimelineEvent[];
+  filters: TimelineFilters;
+  onFiltersChange: React.Dispatch<React.SetStateAction<TimelineFilters>>;
+}) {
+  return (
+    <section className="card-shell p-4 max-[420px]:p-3.5 sm:p-6 lg:p-8">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h2 className="text-[clamp(1.5rem,5vw,2.25rem)] font-extrabold text-slate-900 max-[420px]:text-[1.35rem]">
+            Care Timeline
+          </h2>
+          <p className="mt-2 text-sm font-medium text-slate-600 sm:text-lg">
+            Chronological event history with uncertainty shown explicitly.
+          </p>
+        </div>
+        <div className="pill-button gap-2 bg-[#eef2ff] text-[#3558c8]">
+          <Filter className="h-4 w-4" />
+          {events.length} events
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <FilterSelect
+          label="Task"
+          value={filters.taskId}
+          onChange={(value) => onFiltersChange((current) => ({ ...current, taskId: value }))}
+          options={[
+            { value: "all", label: "All tasks" },
+            ...routines.map((routine) => ({ value: routine.id, label: routine.name })),
+          ]}
+        />
+        <FilterSelect
+          label="Category"
+          value={filters.category}
+          onChange={(value) => onFiltersChange((current) => ({ ...current, category: value }))}
+          options={[
+            { value: "all", label: "All categories" },
+            { value: "Medication", label: "Medication" },
+            { value: "Wellness", label: "Wellness" },
+            { value: "Check-in", label: "Check-in" },
+          ]}
+        />
+        <FilterSelect
+          label="Event"
+          value={filters.eventType}
+          onChange={(value) => onFiltersChange((current) => ({ ...current, eventType: value }))}
+          options={[
+            { value: "all", label: "All events" },
+            { value: "REMINDER_SHOWN", label: "Reminder shown" },
+            { value: "TASK_SNOOZED", label: "Snoozed" },
+            { value: "TASK_COMPLETED", label: "Completed" },
+            { value: "TASK_ALREADY_COMPLETED", label: "Completed earlier" },
+            { value: "HELP_REQUESTED", label: "Help requested" },
+            { value: "DEVICE_OFFLINE", label: "Device offline" },
+          ]}
+        />
+        <FilterSelect
+          label="Status"
+          value={filters.status}
+          onChange={(value) => onFiltersChange((current) => ({ ...current, status: value }))}
+          options={[
+            { value: "all", label: "All statuses" },
+            { value: "Confirmed complete", label: "Confirmed complete" },
+            { value: "Reported already complete", label: "Reported already complete" },
+            { value: "Explicitly postponed", label: "Explicitly postponed" },
+            { value: "Help requested", label: "Help requested" },
+            { value: "Reminder may not have been seen", label: "Reminder may not have been seen" },
+            { value: "Device offline", label: "Device offline" },
+          ]}
+        />
+      </div>
+
+      <div className="mt-5 space-y-4">
+        {events.length ? (
+          events.map((event) => (
+            <article key={event.id} className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="pill-button bg-slate-100 text-slate-700">{formatEventType(event.eventType)}</span>
+                    <span className={`pill-button ${getTimelineStatusClasses(event.status)}`}>{event.status}</span>
+                  </div>
+                  <h3 className="text-lg font-extrabold text-slate-900">{event.taskName}</h3>
+                  <p className="text-sm font-medium text-slate-700">{event.description}</p>
+                  <p className="text-sm font-medium text-slate-500">
+                    {event.careRecipient} • {event.source}
+                  </p>
+                  {event.status === "Reminder may not have been seen" || event.status === "Device offline" ? (
+                    <div className="inline-flex items-start gap-2 rounded-2xl bg-[#fff7de] px-3 py-2 text-sm font-medium text-[#7a5c00]">
+                      <Info className="mt-0.5 h-4 w-4 shrink-0" />
+                      No completion was recorded. The kiosk was offline during part of the reminder window.
+                    </div>
+                  ) : null}
+                </div>
+                <div className="text-left text-sm font-semibold text-slate-600 md:text-right">
+                  {formatTimelineTimestamp(event.timestamp)}
+                </div>
+              </div>
+            </article>
+          ))
+        ) : (
+          <div className="rounded-[20px] border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm font-medium text-slate-600">
+            No events match these filters yet.
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ value: string; label: string }>;
+}) {
+  return (
+    <label className="space-y-2">
+      <span className="block text-sm font-bold text-slate-600">{label}</span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-12 w-full rounded-[14px] border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 outline-none"
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function InfoBox({
+  icon,
+  label,
+  value,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: React.ReactNode;
+}) {
+  return (
+    <article className="info-box min-h-[112px] px-4 py-3 max-[420px]:min-h-[100px] max-[420px]:px-3.5 max-[420px]:py-3 sm:min-h-[150px] sm:px-5 sm:py-4">
+      {icon ? <div className="mb-3">{icon}</div> : null}
+      <div className="space-y-1">
+        <p className="text-sm font-medium text-slate-600 sm:text-lg">{label}</p>
+        <div className="text-[clamp(1rem,3.8vw,1.5rem)] font-extrabold text-slate-900 max-[420px]:text-[0.98rem]">{value}</div>
+      </div>
+    </article>
+  );
+}
+
+function RoutineCard({
+  routine,
+  onModeChange,
+  onFieldChange,
+  onTrigger,
+  onSave,
+}: {
+  routine: Routine;
+  completedCount: number;
+  onModeChange: (id: string, mode: ViewMode) => void;
+  onFieldChange: <K extends keyof Routine>(id: string, key: K, value: Routine[K]) => void;
+  onTrigger: (id: string) => void;
+  onSave: (id: string) => void;
+}) {
+  const badge = getStatusBadge(routine.status);
+
+  return (
+    <article className="card-shell p-4 max-[420px]:p-3.5 sm:p-6 lg:p-8">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className={`pill-button gap-2 ${badge.classes}`}>
+            <badge.icon className="h-5 w-5" />
+            {routine.status}
+          </span>
+        </div>
+
+        <div className="flex flex-col gap-2.5 md:flex-row md:items-center md:justify-end">
+          <span className="text-xs font-medium text-slate-600 sm:text-base md:text-right">
+            {routine.note}
+          </span>
+          <SegmentedControl mode={routine.mode} onChange={(mode) => onModeChange(routine.id, mode)} />
+        </div>
+      </div>
+
+      {routine.mode === "edit" ? (
+        <div className="mt-5 space-y-4 sm:space-y-6">
+          <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-[1.1fr_1fr_120px]">
+            <FieldGroup
+              label="Name"
+              input={
+                <input
+                  value={routine.name}
+                  onChange={(event) => onFieldChange(routine.id, "name", event.target.value)}
+                  className="h-14 w-full rounded-[16px] bg-lavender px-3.5 text-sm font-medium text-slate-800 outline-none ring-0 placeholder:text-slate-400 max-[420px]:h-12 max-[420px]:rounded-[14px] sm:h-20 sm:rounded-[20px] sm:px-6 sm:text-xl"
+                />
+              }
+            />
+            <FieldGroup
+              label="Scheduled time"
+              input={
+                <input
+                  value={routine.time}
+                  onChange={(event) => onFieldChange(routine.id, "time", event.target.value)}
+                  className="h-14 w-full rounded-[16px] bg-lavender px-3.5 text-sm font-medium text-slate-800 outline-none ring-0 placeholder:text-slate-400 max-[420px]:h-12 max-[420px]:rounded-[14px] sm:h-20 sm:rounded-[20px] sm:px-6 sm:text-xl"
+                />
+              }
+            />
+            <FieldGroup
+              label="Auto run"
+              input={
+                <div className="flex h-14 items-center justify-start rounded-[16px] bg-lavender px-3.5 max-[420px]:h-12 max-[420px]:rounded-[14px] sm:h-20 sm:justify-center sm:rounded-[20px] sm:px-0">
+                  <input
+                    type="checkbox"
+                    checked={routine.autoRun}
+                    onChange={(event) => onFieldChange(routine.id, "autoRun", event.target.checked)}
+                    className="h-7 w-7 rounded-md border-0 sm:h-9 sm:w-9"
+                  />
+                </div>
+              }
+            />
+          </div>
+
+          <FieldGroup
+            label="Caregiver instructions"
+            input={
+              <input
+                value={routine.caregiverInstructions ?? ""}
+                onChange={(event) =>
+                  onFieldChange(routine.id, "caregiverInstructions", event.target.value)
+                }
+                className="h-14 w-full rounded-[16px] bg-lavender px-3.5 text-sm font-medium text-slate-800 outline-none ring-0 placeholder:text-slate-400 max-[420px]:h-12 max-[420px]:rounded-[14px] sm:h-20 sm:rounded-[20px] sm:px-6 sm:text-xl"
+              />
+            }
+          />
+
+          <EscalationEditor routine={routine} onFieldChange={onFieldChange} />
+
+          <div className="grid gap-3 sm:grid-cols-2 sm:gap-4">
+            <ActionButton icon={Play} label="Trigger" onClick={() => onTrigger(routine.id)} />
+            <ActionButton icon={Save} label="Save" onClick={() => onSave(routine.id)} />
+          </div>
+        </div>
+      ) : (
+        <div className="mt-5 space-y-4 sm:space-y-6">
+          <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
+            <div className="space-y-2">
+              <h3 className="text-[clamp(1.05rem,4.5vw,1.5rem)] font-extrabold text-slate-900 max-[420px]:text-[1rem]">
+                {routine.name}
+              </h3>
+              {routine.caregiverInstructions ? (
+                <p className="text-sm font-medium text-slate-600 sm:text-base">
+                  Caregiver note: {routine.caregiverInstructions}
+                </p>
+              ) : null}
+              <p className="text-sm font-medium text-slate-600 sm:text-base">
+                Escalation: {routine.escalationPolicy.enabled ? routine.escalationPolicy.template : "Off"}
+              </p>
+            </div>
+            <div className="text-left text-base font-semibold text-slate-600 md:text-right">
+              {routine.time}
+            </div>
+          </div>
+
+          <ActionButton icon={Play} label="Trigger" onClick={() => onTrigger(routine.id)} fullWidth />
+        </div>
+      )}
+    </article>
+  );
+}
+
+function FieldGroup({ label, input }: { label: string; input: React.ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <label className="block text-sm font-bold text-slate-600 sm:text-lg">{label}</label>
+      {input}
+    </div>
+  );
+}
+
+function EscalationEditor({
+  routine,
+  onFieldChange,
+}: {
+  routine: Routine;
+  onFieldChange: <K extends keyof Routine>(id: string, key: K, value: Routine[K]) => void;
+}) {
+  const isMedication = routine.category === "Medication";
+  const policy = routine.escalationPolicy;
+
+  const handleTemplateChange = (template: EscalationTemplate) => {
+    const nextPolicy = template === "Custom" ? { ...policy, template } : createEscalationPolicy(template, isMedication);
+    onFieldChange(routine.id, "escalationPolicy", nextPolicy);
+  };
+
+  const updateStep = (index: number, next: EscalationStep) => {
+    const nextSteps = policy.steps.map((step, stepIndex) => (stepIndex === index ? next : step));
+    onFieldChange(routine.id, "escalationPolicy", { ...policy, template: "Custom", steps: nextSteps });
+  };
+
+  return (
+    <div className="space-y-3 rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-4 sm:px-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm font-bold text-slate-700 sm:text-lg">Escalation</p>
+          <p className="text-xs font-medium text-slate-500 sm:text-sm">
+            Stops when the task is completed, snoozed, cancelled, or caregiver-acknowledged.
+          </p>
+        </div>
+        <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700 sm:text-base">
+          <input
+            type="checkbox"
+            checked={policy.enabled}
+            onChange={(event) =>
+              onFieldChange(routine.id, "escalationPolicy", { ...policy, enabled: event.target.checked })
+            }
+            className="h-5 w-5 rounded-md"
+          />
+          Enabled
+        </label>
+      </div>
+
+      <FieldGroup
+        label="Template"
+        input={
+          <select
+            value={policy.template}
+            onChange={(event) => handleTemplateChange(event.target.value as EscalationTemplate)}
+            className="h-14 w-full rounded-[16px] bg-white px-3.5 text-sm font-medium text-slate-800 outline-none max-[420px]:h-12 sm:h-16 sm:text-lg"
+          >
+            {(["Gentle", "Standard", "High attention", "Custom"] as const).map((template) => (
+              <option key={template} value={template}>
+                {template}
+              </option>
+            ))}
+          </select>
+        }
+      />
+
+      <div className="space-y-3">
+        {policy.steps.map((step, index) => (
+          <div key={`${routine.id}-${index}`} className="grid gap-3 rounded-[16px] bg-white p-3 sm:grid-cols-[160px_1fr]">
+            <FieldGroup
+              label={`After ${step.delayMinutes} min`}
+              input={
+                <input
+                  type="number"
+                  min={5}
+                  step={5}
+                  value={step.delayMinutes}
+                  onChange={(event) =>
+                    updateStep(index, { ...step, delayMinutes: Number(event.target.value) || step.delayMinutes })
+                  }
+                  className="h-12 w-full rounded-[14px] bg-lavender px-3 text-sm font-medium text-slate-800 outline-none sm:text-base"
+                />
+              }
+            />
+            <FieldGroup
+              label="Action"
+              input={
+                <select
+                  value={step.action}
+                  onChange={(event) =>
+                    updateStep(index, {
+                      ...step,
+                      action: event.target.value as EscalationAction,
+                    })
+                  }
+                  className="h-12 w-full rounded-[14px] bg-lavender px-3 text-sm font-medium text-slate-800 outline-none sm:text-base"
+                >
+                  {getAllowedEscalationActions(isMedication).map((action) => (
+                    <option key={action} value={action}>
+                      {formatEscalationAction(action)}
+                    </option>
+                  ))}
+                </select>
+              }
+            />
+          </div>
+        ))}
+      </div>
+
+      {isMedication ? (
+        <p className="rounded-2xl bg-[#fff7de] px-3 py-2 text-sm font-medium text-[#7a5c00] sm:text-base">
+          Medication safeguard: escalation may repeat reminders, show caregiver wording, or notify family. It never changes dosage or marks medication complete automatically.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function SegmentedControl({
+  mode,
+  onChange,
+}: {
+  mode: ViewMode;
+  onChange: (mode: ViewMode) => void;
+}) {
+  return (
+    <div className="inline-flex w-fit rounded-full bg-[#eef0ff] p-0.5 shadow-sm sm:p-1">
+      {(["view", "edit"] as const).map((item) => {
+        const active = item === mode;
+        return (
+          <button
+            key={item}
+            type="button"
+            onClick={() => onChange(item)}
+            className={`rounded-full px-3 py-1.5 text-sm font-bold transition sm:px-5 sm:py-2 sm:text-lg ${
+              active ? "bg-white text-brand shadow-sm" : "text-slate-600"
+            }`}
+          >
+            {item === "view" ? "View" : "Edit"}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function ActionButton({
   icon: Icon,
-  title,
-  subtitle,
+  label,
   onClick,
 }: {
-  icon: typeof Home;
-  title: string;
-  subtitle?: string;
+  icon: typeof Play;
+  label: string;
   onClick: () => void;
+  fullWidth?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="flex w-full items-center gap-4 px-1 py-4 text-left transition hover:opacity-90"
+      className="inline-flex min-h-[52px] w-full items-center justify-center gap-2 rounded-[16px] bg-action px-4 text-base font-semibold text-white transition hover:bg-[#0f622b] max-[420px]:min-h-[48px] max-[420px]:rounded-[14px] sm:min-h-[72px] sm:gap-3 sm:rounded-[20px] sm:px-6 sm:text-2xl"
     >
-      <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-active/10 text-active">
-        <Icon className="h-6 w-6" />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-lg font-extrabold text-slate-900">{title}</span>
-        {subtitle ? (
-          <span className="mt-1 block text-sm font-semibold leading-6 text-slate-500">
-            {subtitle}
-          </span>
-        ) : null}
-      </span>
-      <ChevronRight className="h-5 w-5 shrink-0 text-slate-400" />
+      <Icon className="h-5 w-5 sm:h-7 sm:w-7" />
+      {label}
     </button>
   );
 }
 
-function SelectableList({
-  items,
-  selected,
-  onSelect,
+function TrackerAlertsCard() {
+  return (
+    <section className="card-shell p-4 max-[420px]:p-3.5 sm:p-6 lg:p-8">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h2 className="text-[clamp(1.5rem,5vw,2.25rem)] font-extrabold text-slate-900 max-[420px]:text-[1.35rem]">
+            Tracker Alerts
+          </h2>
+          <p className="mt-2 text-sm font-medium text-slate-600 sm:text-lg">
+            Wrist tracker pushes alerts for abnormal heart rate or inactivity.
+          </p>
+        </div>
+        <span className="pill-button bg-[#e9f6eb] text-action">Normal</span>
+      </div>
+
+      <div className="mt-5 grid gap-3 sm:mt-6 sm:gap-4 md:grid-cols-2">
+        <InfoBox label="Latest event" value="No alert" icon={null} />
+        <InfoBox label="Source" value="Tracker" icon={null} />
+        <div className="info-box md:col-span-2">
+          <p className="text-sm font-medium text-slate-600 sm:text-lg">Updated</p>
+          <p className="mt-1 text-[clamp(1rem,3.8vw,1.5rem)] font-extrabold text-slate-900">
+            No events yet
+          </p>
+        </div>
+      </div>
+
+      <p className="mt-5 text-sm font-medium text-slate-700 sm:text-lg">No active tracker alert.</p>
+    </section>
+  );
+}
+
+function EmergencySection({ onOpenModal }: { onOpenModal: () => void }) {
+  return (
+    <section className="card-shell border-[#f4b5b5] bg-[#ffd6d6] p-4 shadow-card max-[420px]:p-3.5 sm:p-6 lg:p-8">
+      <h2 className="text-[clamp(1.5rem,5vw,2.25rem)] font-extrabold text-[#a50f0f] max-[420px]:text-[1.35rem]">
+        Need Immediate Attention?
+      </h2>
+      <p className="mt-2.5 text-sm font-medium text-[#bf4f4f] sm:text-lg">
+        Connecting you directly with emergency services and local responders.
+      </p>
+      <button
+        type="button"
+        onClick={onOpenModal}
+        className="mt-5 inline-flex min-h-[54px] w-full items-center justify-center gap-2 rounded-full bg-[#c91818] px-4 text-base font-semibold text-white transition hover:bg-[#b11212] max-[420px]:min-h-[50px] sm:mt-8 sm:min-h-[88px] sm:gap-3 sm:px-8 sm:text-2xl"
+      >
+        <ShieldAlert className="h-5 w-5 sm:h-7 sm:w-7" />
+        Send Emergency Alert
+      </button>
+    </section>
+  );
+}
+
+function SettingsPanel({
+  backendConnected,
+  routines,
+  alertCount,
+  eventCount,
 }: {
-  items: string[];
-  selected: string;
-  onSelect: (value: string) => void;
+  backendConnected: boolean;
+  routines: Routine[];
+  alertCount: number;
+  eventCount: number;
 }) {
   return (
-    <div className="card-shell p-4 sm:p-5">
-      <div className="divide-y divide-slate-200/80">
-        {items.map((item) => (
-          <button
-            key={item}
-            type="button"
-            onClick={() => onSelect(item)}
-            className="flex w-full items-center justify-between gap-4 px-2 py-4 text-left"
-          >
-            <span className="text-xl font-extrabold text-slate-900">{item}</span>
-            {item === selected ? (
-              <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-active text-white">
-                <Check className="h-5 w-5" />
+    <>
+      <section className="space-y-3">
+        <p className="text-sm font-semibold text-slate-600 sm:text-lg">Workspace settings</p>
+        <h1 className="text-[clamp(1.9rem,7vw,3.625rem)] font-extrabold tracking-tight text-slate-900 max-[420px]:text-[1.8rem]">
+          Settings
+        </h1>
+      </section>
+
+      <section className="card-shell p-4 max-[420px]:p-3.5 sm:p-6 lg:p-8">
+        <div className="grid gap-3 md:grid-cols-3">
+          <InfoBox label="Backend" value={backendConnected ? "Connected" : "Demo mode"} icon={<Settings className="h-7 w-7 text-brand sm:h-9 sm:w-9" />} />
+          <InfoBox label="Tracked routines" value={`${routines.length}`} icon={<Home className="h-7 w-7 text-brand sm:h-9 sm:w-9" />} />
+          <InfoBox label="Timeline events" value={`${eventCount}`} icon={<History className="h-7 w-7 text-brand sm:h-9 sm:w-9" />} />
+        </div>
+        <p className="mt-5 text-sm font-medium text-slate-600 sm:text-lg">
+          Open alerts: {alertCount}. Use the Home tab to edit routines and the History tab to review reminder outcomes.
+        </p>
+      </section>
+    </>
+  );
+}
+
+function BottomNavigation({
+  activeTab,
+  onChange,
+}: {
+  activeTab: AppTab;
+  onChange: (tab: AppTab) => void;
+}) {
+  const tabs = [
+    { label: "Home", icon: Home, value: "home" as const },
+    { label: "History", icon: History, value: "history" as const },
+    { label: "Settings", icon: Settings, value: "settings" as const },
+  ];
+
+  return (
+    <>
+      <nav className="fixed inset-x-0 bottom-0 z-40 border border-white/80 bg-white/95 px-1.5 pb-2.5 pt-2.5 shadow-[0_-10px_30px_rgba(28,39,72,0.08)] backdrop-blur sm:inset-x-8 sm:rounded-t-[28px] sm:px-4 sm:pb-5 sm:pt-4">
+        <div className="mx-auto grid max-w-screen-2xl grid-cols-3 gap-1 sm:gap-4">
+          {tabs.map((tab) => (
+            <button
+              key={tab.label}
+              type="button"
+              onClick={() => onChange(tab.value)}
+              className={`flex min-w-0 flex-col items-center justify-center gap-1 rounded-full px-1 py-1.5 text-[11px] font-semibold sm:px-4 sm:py-3 sm:text-lg ${
+                activeTab === tab.value ? "text-[#351898]" : "text-slate-600"
+              }`}
+            >
+              <span
+                className={`inline-flex h-10 w-full max-w-[112px] items-center justify-center gap-1 rounded-full px-2 sm:h-14 sm:max-w-[128px] sm:gap-2 sm:px-6 ${
+                  activeTab === tab.value ? "bg-active/85 text-[#351898]" : "bg-transparent"
+                }`}
+              >
+                <tab.icon className="h-4 w-4 shrink-0 sm:h-7 sm:w-7" />
+                <span className="truncate">{tab.label}</span>
               </span>
-            ) : (
-              <ChevronRight className="h-5 w-5 text-slate-400" />
-            )}
-          </button>
-        ))}
+            </button>
+          ))}
+        </div>
+      </nav>
+
+      <button
+        type="button"
+        aria-label="Help"
+        className="fixed bottom-20 right-3 z-50 inline-flex h-10 w-10 items-center justify-center rounded-full bg-[#2a2a2a] text-xl font-medium text-white shadow-xl sm:bottom-4 sm:right-4 sm:h-14 sm:w-14 sm:text-3xl"
+      >
+        ?
+      </button>
+    </>
+  );
+}
+
+function Toast({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  return (
+    <div className="fixed bottom-24 left-1/2 z-50 w-[min(92vw,420px)] -translate-x-1/2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white shadow-2xl sm:bottom-28 sm:px-5 sm:py-4 sm:text-base">
+      <div className="flex items-start justify-between gap-4">
+        <span>{message}</span>
+        <button type="button" onClick={onDismiss} className="text-white/70 hover:text-white">
+          <X className="h-5 w-5" />
+        </button>
       </div>
     </div>
   );
 }
 
-function buildTaskNote(task: any) {
-  const startedAt = task.triggeredAt || task.lastTriggeredAt;
-  if (task.status === "Running" && startedAt) {
-    return `Started at ${new Intl.DateTimeFormat("en-US", {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    }).format(new Date(startedAt))}`;
-  }
-
-  if (task.status === "Completed" && task.completedAt) {
-    return `Completed at ${new Intl.DateTimeFormat("en-US", {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    }).format(new Date(task.completedAt))}`;
-  }
-
-  return task.is_auto ? "Auto mode enabled" : "Manual mode only";
+function ConfirmationModal({
+  title,
+  body,
+  confirmLabel,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4">
+      <div className="w-full max-w-lg rounded-[28px] bg-white p-5 shadow-2xl sm:p-8">
+        <h3 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">{title}</h3>
+        <p className="mt-3 text-lg text-slate-600">{body}</p>
+        <div className="mt-8 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-full border border-slate-200 px-6 py-3 text-lg font-semibold text-slate-700 transition hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="rounded-full bg-[#c91818] px-6 py-3 text-lg font-semibold text-white transition hover:bg-[#b11212]"
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function normalizeRoutinePeriod(periodValue?: string, timeValue?: string): RoutinePeriod {
-  if (periodValue === "morning" || periodValue === "afternoon" || periodValue === "evening") {
-    return periodValue;
+function getStatusBadge(status: RoutineStatus) {
+  switch (status) {
+    case "Completed":
+      return { icon: CheckCircle2, classes: "bg-[#e9f6eb] text-action" };
+    case "Completed earlier":
+      return { icon: History, classes: "bg-[#eef2ff] text-[#3558c8]" };
+    case "Snoozed":
+      return { icon: Clock3, classes: "bg-[#fff5d7] text-[#9b6b00]" };
+    case "Needs help":
+      return { icon: Siren, classes: "bg-[#ffe2e2] text-[#8f1414]" };
+    case "No response":
+      return { icon: CircleAlert, classes: "bg-[#f1f5f9] text-slate-600" };
+    case "Pending":
+    default:
+      return { icon: Clock3, classes: "bg-[#dfe8ff] text-slate-600" };
   }
-
-  const [hourText = "9"] = (timeValue || "09:00").split(":");
-  const hour = Number(hourText);
-  if (hour < 12) return "morning";
-  if (hour < 17) return "afternoon";
-  return "evening";
 }
 
-function buildInitialFeed(): AlertFeedItem[] {
+function createEscalationPolicy(
+  template: EscalationTemplate,
+  medication = false,
+): EscalationPolicy {
+  const allowed = getAllowedEscalationActions(medication);
+  const baseSteps: Record<Exclude<EscalationTemplate, "Custom">, EscalationStep[]> = {
+    Gentle: [
+      { delayMinutes: 10, action: "REPEAT_VISUAL_REMINDER" },
+      { delayMinutes: 30, action: "SHOW_DETAILED_INSTRUCTION" },
+    ],
+    Standard: [
+      { delayMinutes: 10, action: "REPEAT_VISUAL_REMINDER" },
+      { delayMinutes: 20, action: "PLAY_VOICE_REMINDER" },
+      { delayMinutes: 40, action: "NOTIFY_CAREGIVER" },
+    ],
+    "High attention": [
+      { delayMinutes: 10, action: "REPEAT_VISUAL_REMINDER" },
+      { delayMinutes: 20, action: "PLAY_VOICE_REMINDER" },
+      { delayMinutes: 30, action: "SHOW_DETAILED_INSTRUCTION" },
+      { delayMinutes: 40, action: "NOTIFY_CAREGIVER" },
+    ],
+  };
+
+  const templateSteps =
+    template === "Custom"
+      ? baseSteps.Standard
+      : baseSteps[template].filter((step) => allowed.includes(step.action));
+
+  return {
+    enabled: true,
+    template,
+    steps: templateSteps,
+  };
+}
+
+function getAllowedEscalationActions(medication: boolean): EscalationAction[] {
+  if (medication) {
+    return [
+      "REPEAT_VISUAL_REMINDER",
+      "SHOW_DETAILED_INSTRUCTION",
+      "SEND_FAMILY_VOICE_MESSAGE",
+      "NOTIFY_CAREGIVER",
+    ];
+  }
+
   return [
-    {
-      id: "feed_boot_1",
-      level: "success",
-      title: "Caregiver dashboard online",
-      message: "Home station and caregiver workspace are ready for routine monitoring.",
-      timestampLabel: "Just now",
-    },
-    {
-      id: "feed_boot_2",
-      level: "info",
-      title: "Tracker sync healthy",
-      message: "Wearable stream is available for vitals, geofence, and safety alerts.",
-      timestampLabel: "Just now",
-    },
+    "REPEAT_VISUAL_REMINDER",
+    "PLAY_VOICE_REMINDER",
+    "SHOW_DETAILED_INSTRUCTION",
+    "SEND_FAMILY_VOICE_MESSAGE",
+    "NOTIFY_CAREGIVER",
   ];
 }
 
-
-
-// ---------------------------------------------------------------------------
-// KioskPairingCard — caregiver enters the 6-digit PIN shown on the Kiosk
-// ---------------------------------------------------------------------------
-function KioskPairingCard({
-  familyId,
-  pushToast,
-}: {
-  familyId: string;
-  pushToast: (msg: string) => void;
-}) {
-  const [pin, setPin] = useState("");
-  const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
-  const [errorMsg, setErrorMsg] = useState("");
-
-  async function handleLink() {
-    const cleaned = pin.replace(/\s/g, "");
-    if (cleaned.length !== 6 || !/^\d{6}$/.test(cleaned)) {
-      setErrorMsg("Please enter a valid 6-digit PIN.");
-      setStatus("error");
-      return;
-    }
-    setStatus("loading");
-    setErrorMsg("");
-    try {
-      const result = await linkKioskByPin(cleaned, familyId);
-      if (result === "ok") {
-        setStatus("success");
-        pushToast("Kiosk linked successfully! The TV screen will update automatically.");
-      } else if (result === "not_found") {
-        setErrorMsg("PIN not found. Make sure the Kiosk is showing this code and try again.");
-        setStatus("error");
-      } else {
-        setErrorMsg("This PIN has already been claimed by another session.");
-        setStatus("error");
-      }
-    } catch (err) {
-      console.error(err);
-      setErrorMsg("Connection error. Check your internet and try again.");
-      setStatus("error");
-    }
-  }
-
-  if (status === "success") {
-    return (
-      <div className="flex flex-col items-center gap-6 rounded-[24px] bg-emerald-50 px-6 py-10 text-center">
-        <span className="inline-flex h-20 w-20 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
-          <CheckCircle2 className="h-10 w-10" />
-        </span>
-        <h3 className="text-2xl font-extrabold text-slate-900">Kiosk Linked!</h3>
-        <p className="max-w-sm text-base font-medium leading-7 text-slate-600">
-          The TV/tablet kiosk has been connected to this caregiver account. It will
-          now receive reminders and routine updates in real time.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-5">
-      {/* Instruction card */}
-      <div className="rounded-[20px] bg-active/8 border border-active/20 px-5 py-5">
-        <p className="text-sm font-extrabold uppercase tracking-[0.2em] text-active">How to pair</p>
-        <ol className="mt-3 space-y-2 text-base font-medium leading-7 text-slate-700">
-          <li>1. Open the <strong>Remember.For.Me</strong> app on the TV or tablet.</li>
-          <li>2. Wait for the <strong>6-digit PIN</strong> to appear on screen.</li>
-          <li>3. Type that PIN below and tap <strong>Link Kiosk</strong>.</li>
-        </ol>
-      </div>
-
-      {/* PIN input */}
-      <div className="space-y-2">
-        <label className="block text-sm font-extrabold uppercase tracking-[0.18em] text-slate-500">
-          Kiosk PIN
-        </label>
-        <input
-          id="kiosk-pin-input"
-          type="text"
-          inputMode="numeric"
-          maxLength={6}
-          value={pin}
-          onChange={(e) => {
-            setPin(e.target.value.replace(/\D/g, "").slice(0, 6));
-            setStatus("idle");
-            setErrorMsg("");
-          }}
-          placeholder="e.g. 482 917"
-          className="h-16 w-full rounded-[18px] bg-lavender px-5 text-center text-2xl font-extrabold tracking-[0.3em] text-slate-800 outline-none placeholder:font-normal placeholder:tracking-normal placeholder:text-slate-400 focus:ring-2 focus:ring-active/40"
-        />
-        {errorMsg ? (
-          <p className="text-sm font-semibold text-red-500">{errorMsg}</p>
-        ) : null}
-      </div>
-
-      {/* Action button */}
-      <button
-        type="button"
-        id="link-kiosk-btn"
-        onClick={() => void handleLink()}
-        disabled={status === "loading" || pin.length < 6}
-        className="inline-flex min-h-[64px] w-full items-center justify-center gap-3 rounded-[20px] bg-active px-6 text-xl font-bold text-white transition hover:bg-[#7a5df0] disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {status === "loading" ? (
-          "Linking..."
-        ) : (
-          <>
-            <Link2 className="h-5 w-5" />
-            Link Kiosk
-          </>
-        )}
-      </button>
-
-      <p className="text-center text-xs font-semibold text-slate-400">
-        Each PIN can only be used once. The kiosk will update automatically once linked.
-      </p>
-    </div>
-  );
+function formatEscalationAction(action: EscalationAction) {
+  return action
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
-// ---------------------------------------------------------------------------
-// ElderlyProfileCard — live form: writes elder name + caregiver name to Firebase
-// The Kiosk listens to families/{familyId}/elder and updates immediately.
-// ---------------------------------------------------------------------------
-function ElderlyProfileCard({
-  familyId,
-  pushToast,
-  onUpdateCaregiverName,
-}: {
-  familyId: string;
-  pushToast: (msg: string) => void;
-  onUpdateCaregiverName: (name: string) => Promise<void>;
-}) {
-  const [elderName, setElderName] = useState("");
-  const [caregiverName, setCaregiverName] = useState("");
-  const [loaded, setLoaded] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  // Load current values from Firebase on mount
-  useEffect(() => {
-    const unsubscribe = subscribeToFamilyPath(familyId, "elder", (snapshot) => {
-      if (!loaded) {
-        const data = snapshot.val() ?? {};
-        setElderName(data.name ?? "");
-        setCaregiverName(data.caregiverName ?? "");
-        setLoaded(true);
-      }
-    });
-    return unsubscribe;
-  }, [familyId, loaded]);
-
-  async function handleSave() {
-    const trimmedElder = elderName.trim();
-    const trimmedCaregiver = caregiverName.trim();
-    if (!trimmedElder) {
-      pushToast("Please enter the elder's name.");
-      return;
-    }
-    setSaving(true);
-    try {
-      await updateFamilyPath(familyId, "elder", {
-        name: trimmedElder,
-        caregiverName: trimmedCaregiver,
-        updatedAt: Date.now(),
-      });
-      if (trimmedCaregiver) {
-        await onUpdateCaregiverName(trimmedCaregiver);
-      }
-      pushToast("Profile saved — Kiosk will update shortly.");
-    } catch (err) {
-      console.error(err);
-      pushToast("Failed to save. Check your connection.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  if (!loaded) {
-    return (
-      <div className="space-y-4">
-        {[1, 2].map((i) => (
-          <div key={i} className="h-16 animate-pulse rounded-[18px] bg-lavender" />
-        ))}
-      </div>
+function calculateReminderEffectiveness(events: TimelineEvent[]): ReminderEffectiveness[] {
+  const channels: ReminderEffectiveness["channel"][] = ["VISUAL", "VOICE", "CAREGIVER_FOLLOW_UP"];
+  return channels.map((channel) => {
+    const delivered = events.filter(
+      (event) =>
+        event.channel === channel &&
+        ["REMINDER_SHOWN", "REMINDER_REPEATED", "VOICE_REMINDER_PLAYED", "CAREGIVER_NOTIFIED"].includes(
+          event.eventType,
+        ),
     );
-  }
+    const responses = events.filter(
+      (event) =>
+        event.channel === channel &&
+        ["TASK_COMPLETED", "TASK_ALREADY_COMPLETED", "TASK_SNOOZED", "HELP_REQUESTED"].includes(event.eventType),
+    );
+    const completed = events.filter(
+      (event) =>
+        event.channel === channel &&
+        ["TASK_COMPLETED", "TASK_ALREADY_COMPLETED"].includes(event.eventType),
+    );
+    const responseMinutes = responses
+      .map((event) => Number(event.metadata?.responseDelayMinutes))
+      .filter((value) => Number.isFinite(value));
+    const helpRequests = responses.filter((event) => event.eventType === "HELP_REQUESTED").length;
+    const snoozes = responses.filter((event) => event.eventType === "TASK_SNOOZED").length;
 
-  return (
-    <div className="space-y-5">
-      <div className="rounded-[20px] bg-active/8 border border-active/20 px-5 py-4">
-        <p className="text-sm font-extrabold uppercase tracking-[0.2em] text-active">Live sync</p>
-        <p className="mt-1 text-sm font-medium text-slate-600">
-          Changes below are written to Firebase and the Kiosk screen updates automatically.
-        </p>
-      </div>
-
-      {/* Elder name */}
-      <div className="space-y-2">
-        <label className="block text-sm font-extrabold uppercase tracking-[0.18em] text-slate-500">
-          Elder's name (shown on Kiosk)
-        </label>
-        <input
-          id="elder-name-input"
-          type="text"
-          value={elderName}
-          onChange={(e) => setElderName(e.target.value)}
-          placeholder="e.g. Grandma Lan"
-          className="h-16 w-full rounded-[18px] bg-lavender px-5 text-lg font-medium text-slate-800 outline-none focus:ring-2 focus:ring-active/40"
-        />
-      </div>
-
-      {/* Caregiver name */}
-      <div className="space-y-2">
-        <label className="block text-sm font-extrabold uppercase tracking-[0.18em] text-slate-500">
-          Caregiver's name (shown in Kiosk messages)
-        </label>
-        <input
-          id="caregiver-name-input"
-          type="text"
-          value={caregiverName}
-          onChange={(e) => setCaregiverName(e.target.value)}
-          placeholder="e.g. Minh"
-          className="h-16 w-full rounded-[18px] bg-lavender px-5 text-lg font-medium text-slate-800 outline-none focus:ring-2 focus:ring-active/40"
-        />
-        <p className="text-xs font-semibold text-slate-400">
-          The Kiosk will say "Your child, [name], is at work and will be home soon."
-        </p>
-      </div>
-
-      <button
-        type="button"
-        id="save-elderly-profile-btn"
-        onClick={() => void handleSave()}
-        disabled={saving}
-        className="inline-flex min-h-[64px] w-full items-center justify-center gap-3 rounded-[20px] bg-active px-6 text-xl font-bold text-white transition hover:bg-[#7a5df0] disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {saving ? "Saving..." : "Save & Sync to Kiosk"}
-      </button>
-    </div>
-  );
+    return {
+      channel,
+      remindersDelivered: delivered.length,
+      responsesRecorded: responses.length,
+      completedAfterReminder: completed.length,
+      completionRate: delivered.length ? completed.length / delivered.length : 0,
+      medianResponseMinutes: responseMinutes.length ? median(responseMinutes) : null,
+      helpRequestRate: delivered.length ? helpRequests / delivered.length : 0,
+      snoozeRate: delivered.length ? snoozes / delivered.length : 0,
+    };
+  });
 }
 
-// ---------------------------------------------------------------------------
-// OnboardingWizard — 3-step setup flow for newly registered accounts
-// ---------------------------------------------------------------------------
-function OnboardingWizard({
-  familyId,
-  pushToast,
-  caregiverName,
-  onComplete,
-}: {
-  familyId: string;
-  pushToast: (msg: string) => void;
-  caregiverName: string;
-  onComplete: () => void;
-}) {
-  const [step, setStep] = useState(1);
-  const [pin, setPin] = useState("");
-  const [linking, setLinking] = useState(false);
-  const [linkSuccess, setLinkSuccess] = useState(false);
+function buildInsightSuggestion(effectiveness: ReminderEffectiveness[]): InsightSuggestion | null {
+  const visual = effectiveness.find((item) => item.channel === "VISUAL");
+  const voice = effectiveness.find((item) => item.channel === "VOICE");
+  if (!visual || !voice) return null;
+  if (visual.remindersDelivered < 5 || voice.remindersDelivered < 5) return null;
+  if (voice.completionRate <= visual.completionRate) return null;
 
-  // Step 2 profile
-  const [elderName, setElderName] = useState("");
-  const [profileCaregiverName, setProfileCaregiverName] = useState(caregiverName);
+  return {
+    type: "USE_VOICE_REMINDER",
+    title: "Use voice reminders for this routine?",
+    message: `Recorded completions followed ${voice.completedAfterReminder} of ${voice.remindersDelivered} voice reminders, compared with ${visual.completedAfterReminder} of ${visual.remindersDelivered} visual reminders.`,
+    evidence: {
+      voiceObservations: voice.remindersDelivered,
+      voiceCompletionRate: Number(voice.completionRate.toFixed(2)),
+      visualObservations: visual.remindersDelivered,
+      visualCompletionRate: Number(visual.completionRate.toFixed(2)),
+    },
+    requiresCaregiverApproval: true,
+  };
+}
 
-  // Step 3 routine
-  const [routineName, setRoutineName] = useState("Morning Medicine");
-  const [routineTime, setRoutineTime] = useState("08:00");
-  const [routinePeriod, setRoutinePeriod] = useState<"morning" | "afternoon" | "evening">("morning");
-  const [voiceEnabled, setVoiceEnabled] = useState(true);
-  const [autoRun, setAutoRun] = useState(true);
-  const [creating, setCreating] = useState(false);
-
-  async function handleLinkKiosk() {
-    const cleaned = pin.replace(/\s/g, "");
-    if (cleaned.length !== 6 || !/^\d{6}$/.test(cleaned)) {
-      pushToast("Please enter a valid 6-digit PIN.");
-      return;
-    }
-    setLinking(true);
-    try {
-      const result = await linkKioskByPin(cleaned, familyId);
-      if (result === "ok") {
-        setLinkSuccess(true);
-        pushToast("Kiosk paired! The TV screen will refresh now.");
-        setTimeout(() => setStep(2), 1200);
-      } else if (result === "not_found") {
-        pushToast("PIN not found. Check the Kiosk display and try again.");
-      } else {
-        pushToast("This PIN has already been claimed.");
-      }
-    } catch (err) {
-      console.error(err);
-      pushToast("Connection error. Try again.");
-    } finally {
-      setLinking(false);
-    }
+function median(values: number[]) {
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return (sorted[middle - 1] + sorted[middle]) / 2;
   }
+  return sorted[middle];
+}
 
-  async function handleSaveProfile() {
-    const trimmedElder = elderName.trim();
-    const trimmedCaregiver = profileCaregiverName.trim();
-    if (!trimmedElder) {
-      pushToast("Elder name is required.");
-      return;
-    }
-    try {
-      await updateFamilyPath(familyId, "elder", {
-        name: trimmedElder,
-        caregiverName: trimmedCaregiver,
-        status: "in_home",
-        lastSeenAt: Date.now(),
-        updatedAt: Date.now(),
-      });
-      setStep(3);
-    } catch (err) {
-      console.error(err);
-      pushToast("Failed to save profile.");
-    }
+function formatChannel(channel: ReminderEffectiveness["channel"]) {
+  return channel.split("_").join(" ");
+}
+
+function formatEventType(eventType: TimelineEventType) {
+  return eventType
+    .split("_")
+    .join(" ")
+    .toLowerCase()
+    .replace(/\b\w/g, (char: string) => char.toUpperCase());
+}
+
+function getTimelineStatusClasses(status: TimelineStatus) {
+  switch (status) {
+    case "Confirmed complete":
+      return "bg-[#e9f6eb] text-action";
+    case "Reported already complete":
+      return "bg-[#eef2ff] text-[#3558c8]";
+    case "Explicitly postponed":
+      return "bg-[#fff5d7] text-[#9b6b00]";
+    case "Help requested":
+      return "bg-[#ffe2e2] text-[#8f1414]";
+    case "Reminder may not have been seen":
+    case "Device offline":
+      return "bg-[#fff7de] text-[#7a5c00]";
+    default:
+      return "bg-slate-100 text-slate-700";
   }
+}
 
-  async function handleCreateFirstRoutine() {
-    const trimmedRoutine = routineName.trim();
-    if (!trimmedRoutine) {
-      pushToast("Routine name is required.");
-      return;
-    }
-    setCreating(true);
-    try {
-      // 1. Create first routine task
-      await updateFamilyPath(familyId, `tasks/task_init`, {
-        name: trimmedRoutine,
-        scheduled_time: routineTime,
-        is_auto: autoRun,
-        period: routinePeriod,
-        voiceEnabled: voiceEnabled,
-        status: "Pending",
-        text: `${elderName} ơi, đến giờ ${trimmedRoutine} rồi.`,
-        is_triggered: false,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        triggeredAt: null,
-        spokenAt: null,
-        completedAt: null,
-        triggerMode: null,
-      });
+function formatTimelineTimestamp(timestamp: string) {
+  return new Date(timestamp).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
 
-      // 2. Initialize default kiosk details
-      await updateFamilyPath(familyId, "kiosk", {
-        online: true,
-        name: "Home Kiosk Screen",
-        lastHeartbeatAt: Date.now(),
-        volumeForced: false,
-        updatedAt: Date.now(),
-      });
+function formatTimestamp(date: Date) {
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
 
-      // 3. Mark onboarding completed
-      await updateFamilyPath(familyId, "onboarding_completed", {
-        onboarding_completed: true,
-      });
+function createAvatarSvg(hair: string, skin: string, shirt: string) {
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="avatar">
+      <defs>
+        <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#ffffff"/>
+          <stop offset="100%" stop-color="#f2f5ff"/>
+        </linearGradient>
+      </defs>
+      <rect width="160" height="160" rx="36" fill="url(#bg)" />
+      <circle cx="80" cy="58" r="30" fill="${skin}" />
+      <path d="M44 54c4-26 25-38 43-38 21 0 37 13 40 35-13-11-29-14-45-14-13 0-27 4-38 17z" fill="${hair}" />
+      <path d="M38 146c5-27 25-46 42-46 23 0 42 19 44 46z" fill="${shirt}" />
+      <circle cx="68" cy="58" r="4.5" fill="#25324a" />
+      <circle cx="93" cy="58" r="4.5" fill="#25324a" />
+      <path d="M68 78c5 5 16 5 22 0" fill="none" stroke="#9a5b4f" stroke-width="5" stroke-linecap="round" />
+    </svg>
+  `;
 
-      pushToast("Setup completed! Welcome to your dashboard.");
-      onComplete();
-    } catch (err) {
-      console.error(err);
-      pushToast("Failed to complete setup.");
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  return (
-    <div className="card-shell p-6 sm:p-8 space-y-6">
-      {/* Progress bar */}
-      <div className="flex items-center justify-between border-b border-slate-200/80 pb-4">
-        <div>
-          <h2 className="text-2xl font-black text-slate-900">Setup Wizard</h2>
-          <p className="text-sm font-semibold text-slate-500">Step {step} of 3</p>
-        </div>
-        <div className="flex gap-2">
-          {[1, 2, 3].map((s) => (
-            <span
-              key={s}
-              className={`h-3 w-8 rounded-full transition ${
-                s <= step ? "bg-active" : "bg-slate-200"
-              }`}
-            />
-          ))}
-        </div>
-      </div>
-
-      {step === 1 && (
-        <div className="space-y-5">
-          <div className="text-center space-y-2">
-            <span className="inline-flex h-16 w-16 items-center justify-center rounded-[20px] bg-active/10 text-active">
-              <Link2 className="h-8 w-8" />
-            </span>
-            <h3 className="text-2xl font-black text-slate-900">Link your Kiosk Screen</h3>
-            <p className="text-base font-semibold text-slate-600">
-              Open the <strong>Remember.For.Me</strong> app on your TV or tablet and enter the 6-digit PIN code displayed.
-            </p>
-          </div>
-
-          <input
-            type="text"
-            inputMode="numeric"
-            maxLength={6}
-            value={pin}
-            onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
-            placeholder="e.g. 123456"
-            className="h-16 w-full rounded-[18px] bg-lavender px-5 text-center text-2xl font-extrabold tracking-[0.3em] text-slate-800 outline-none placeholder:font-normal placeholder:tracking-normal placeholder:text-slate-400 focus:ring-2 focus:ring-active/40"
-          />
-
-          {linkSuccess ? (
-            <div className="flex items-center justify-center gap-2 text-emerald-600 font-bold">
-              <CheckCircle2 className="h-5 w-5 animate-bounce" />
-              Connected! Proceeding...
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => void handleLinkKiosk()}
-              disabled={linking || pin.length < 6}
-              className="inline-flex min-h-[64px] w-full items-center justify-center gap-3 rounded-[20px] bg-active px-6 text-xl font-bold text-white transition hover:bg-[#7a5df0] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {linking ? "Pairing..." : "Link Kiosk & Continue"}
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={() => setStep(2)}
-            className="text-sm font-bold text-slate-400 block text-center w-full hover:underline"
-          >
-            Skip for now (configure later)
-          </button>
-        </div>
-      )}
-
-      {step === 2 && (
-        <div className="space-y-5">
-          <div className="text-center space-y-2">
-            <span className="inline-flex h-16 w-16 items-center justify-center rounded-[20px] bg-active/10 text-active">
-              <UserRound className="h-8 w-8" />
-            </span>
-            <h3 className="text-2xl font-black text-slate-900">Family Information</h3>
-            <p className="text-base font-semibold text-slate-600">
-              Enter names so Kiosk messages can be personalized.
-            </p>
-          </div>
-
-          <div className="space-y-4">
-            <label className="block space-y-2">
-              <span className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">
-                Elder's name (shown on Kiosk)
-              </span>
-              <input
-                type="text"
-                value={elderName}
-                onChange={(e) => setElderName(e.target.value)}
-                placeholder="e.g. Grandma Lan"
-                className="h-16 w-full rounded-[18px] bg-lavender px-5 text-lg font-medium text-slate-800 outline-none focus:ring-2 focus:ring-active/40"
-              />
-            </label>
-
-            <label className="block space-y-2">
-              <span className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">
-                Your name (Caregiver)
-              </span>
-              <input
-                type="text"
-                value={profileCaregiverName}
-                onChange={(e) => setProfileCaregiverName(e.target.value)}
-                placeholder="e.g. Minh"
-                className="h-16 w-full rounded-[18px] bg-lavender px-5 text-lg font-medium text-slate-800 outline-none focus:ring-2 focus:ring-active/40"
-              />
-            </label>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => void handleSaveProfile()}
-            className="inline-flex min-h-[64px] w-full items-center justify-center gap-3 rounded-[20px] bg-active px-6 text-xl font-bold text-white transition hover:bg-[#7a5df0]"
-          >
-            Save &amp; Continue
-          </button>
-        </div>
-      )}
-
-      {step === 3 && (
-        <div className="space-y-5">
-          <div className="text-center space-y-2">
-            <span className="inline-flex h-16 w-16 items-center justify-center rounded-[20px] bg-active/10 text-active">
-              <Clock3 className="h-8 w-8" />
-            </span>
-            <h3 className="text-2xl font-black text-slate-900">First Daily Routine</h3>
-            <p className="text-base font-semibold text-slate-600">
-              Create the first daily alert for {elderName || "your elder"}.
-            </p>
-          </div>
-
-          <div className="space-y-4">
-            <label className="block space-y-2">
-              <span className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">
-                Routine name
-              </span>
-              <input
-                type="text"
-                value={routineName}
-                onChange={(e) => setRoutineName(e.target.value)}
-                placeholder="e.g. Morning Medicine"
-                className="h-16 w-full rounded-[18px] bg-lavender px-5 text-lg font-medium text-slate-800 outline-none focus:ring-2 focus:ring-active/40"
-              />
-            </label>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="block space-y-2">
-                <span className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Scheduled time
-                </span>
-                <input
-                  type="time"
-                  value={routineTime}
-                  onChange={(e) => setRoutineTime(e.target.value)}
-                  className="h-16 w-full rounded-[18px] bg-lavender px-5 text-lg font-medium text-slate-800 outline-none focus:ring-2 focus:ring-active/40"
-                />
-              </label>
-
-              <label className="block space-y-2">
-                <span className="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">
-                  Routine Period
-                </span>
-                <select
-                  value={routinePeriod}
-                  onChange={(e) => setRoutinePeriod(e.target.value as any)}
-                  className="h-16 w-full rounded-[18px] bg-lavender px-5 text-lg font-medium text-slate-800 outline-none focus:ring-2 focus:ring-active/40"
-                >
-                  <option value="morning">Morning</option>
-                  <option value="afternoon">Afternoon</option>
-                  <option value="evening">Evening</option>
-                </select>
-              </label>
-            </div>
-
-            <div className="flex items-center justify-between p-3 bg-lavender rounded-[16px]">
-              <div>
-                <p className="text-base font-extrabold text-slate-800">Voice Announce</p>
-                <p className="text-xs font-semibold text-slate-500">Speak out loud on Kiosk</p>
-              </div>
-              <input
-                type="checkbox"
-                checked={voiceEnabled}
-                onChange={(e) => setVoiceEnabled(e.target.checked)}
-                className="h-6 w-6 text-active rounded animate-none"
-              />
-            </div>
-
-            <div className="flex items-center justify-between p-3 bg-lavender rounded-[16px]">
-              <div>
-                <p className="text-base font-extrabold text-slate-800">Auto Run</p>
-                <p className="text-xs font-semibold text-slate-500">Trigger automatically at time</p>
-              </div>
-              <input
-                type="checkbox"
-                checked={autoRun}
-                onChange={(e) => setAutoRun(e.target.checked)}
-                className="h-6 w-6 text-active rounded animate-none"
-              />
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => void handleCreateFirstRoutine()}
-            disabled={creating}
-            className="inline-flex min-h-[64px] w-full items-center justify-center gap-3 rounded-[20px] bg-active px-6 text-xl font-bold text-white transition hover:bg-[#7a5df0] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {creating ? "Finishing..." : "Create Routine & Finish Setup"}
-          </button>
-        </div>
-      )}
-    </div>
-  );
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
