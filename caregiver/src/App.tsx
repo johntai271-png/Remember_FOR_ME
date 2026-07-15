@@ -41,6 +41,11 @@ import {
   pushFamilyEvent,
 } from "./firebase";
 import { HomeScreen, ManagementScreen } from "./screens/HomeScreen";
+import {
+  DEFAULT_HOME,
+  normalizeHome,
+  type HomeZone,
+} from "./components/LiveSafetyMap";
 import type {
   AppTab,
   AlertFeedItem,
@@ -100,6 +105,19 @@ function playAlertSound() {
     }
   } catch (err) {
     console.error("Failed to play synthesized alert sound:", err);
+  }
+}
+
+// Thông báo hệ thống trên điện thoại/máy người chăm sóc (khi dashboard đang mở
+// hoặc đã "Thêm vào màn hình chính" dạng PWA). Bổ sung cho chuông báo.
+function showSystemNotification(title: string, body: string) {
+  try {
+    if (typeof Notification === "undefined") return;
+    if (Notification.permission === "granted") {
+      new Notification(title, { body, tag: "rfm-tracker", icon: "/vite.svg" });
+    }
+  } catch (err) {
+    console.error("Notification failed:", err);
   }
 }
 
@@ -168,6 +186,7 @@ export default function App() {
     lastHeartbeatAt: null,
     volumeForced: false,
   });
+  const [home, setHome] = useState<HomeZone>(DEFAULT_HOME);
   const [trackerAlert, setTrackerAlert] = useState<any>({
     is_active: false,
     type: null,
@@ -203,6 +222,17 @@ export default function App() {
     const timer = window.setTimeout(() => setToast(null), 2600);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  // Xin quyền thông báo hệ thống để "báo vô điện thoại người con" khi cụ ra khỏi nhà.
+  useEffect(() => {
+    try {
+      if (typeof Notification !== "undefined" && Notification.permission === "default") {
+        void Notification.requestPermission();
+      }
+    } catch {
+      /* trình duyệt không hỗ trợ Notification — bỏ qua, vẫn còn chuông + banner */
+    }
+  }, []);
 
   useEffect(() => {
     let unsubscribeProfile = () => {};
@@ -267,6 +297,17 @@ export default function App() {
         const vitalsStatus = value.vitals?.status || "Normal";
         if (vitalsStatus !== "Normal" && vitalsStatus !== lastVitalsStatus && !isFirstElder) {
           playAlertSound();
+          // Chỉ bật thông báo cho mức nguy hiểm rõ ràng (Cao/Thấp), bỏ qua
+          // "Elevated" do kiosk mô phỏng ngẫu nhiên để tránh báo giả khi demo.
+          const isDanger = /danger|high|low|cao|thấp/i.test(vitalsStatus);
+          if (isDanger) {
+            const bpm = value.vitals?.heartRateBpm;
+            const isHigh = /high|cao/i.test(vitalsStatus);
+            showSystemNotification(
+              `❤️ Nhịp tim ${isHigh ? "cao" : "thấp"} bất thường`,
+              `${bpm ? `${bpm} bpm` : vitalsStatus} — cần kiểm tra ngay.`,
+            );
+          }
         }
         lastVitalsStatus = vitalsStatus;
       }
@@ -278,14 +319,28 @@ export default function App() {
       if (value) setKiosk((current: any) => ({ ...current, ...value }));
     });
 
+    // Vùng an toàn (geofence): toạ độ nhà + bán kính. Chưa cấu hình → dùng mặc định.
+    const unsubHome = subscribeToFamilyPath(familyId, "home", (snapshot) => {
+      setHome(normalizeHome(snapshot.val()));
+    });
+
     let isFirstTracker = true;
+    let lastTrackerActive = false;
     const unsubTracker = subscribeToFamilyPath(familyId, "tracker_alert", (snapshot) => {
       const value = snapshot.val();
       if (value) {
         setTrackerAlert(value);
-        if (value.is_active && !isFirstTracker) {
+        const active =
+          value.is_active === true || value.is_active === "true" || value.is_active === "True";
+        // Chỉ báo khi CHUYỂN sang active (tránh lặp), và không kêu ở lần load đầu.
+        if (active && !lastTrackerActive && !isFirstTracker) {
           playAlertSound();
+          showSystemNotification(
+            "🚨 Người thân đã ra khỏi nhà",
+            value.message || "GPS phát hiện ra khỏi vùng an toàn.",
+          );
         }
+        lastTrackerActive = active;
       }
       isFirstTracker = false;
     });
@@ -380,6 +435,7 @@ export default function App() {
     return () => {
       unsubElder();
       unsubKiosk();
+      unsubHome();
       unsubTracker();
       unsubBleTags();
       unsubTasks();
@@ -624,6 +680,24 @@ export default function App() {
     }
   }
 
+  async function handleResetTimeline() {
+    if (feedItems.length === 0) {
+      pushToast("Timeline is already empty.");
+      return;
+    }
+    const confirm = window.confirm(
+      "Xóa toàn bộ dòng thời gian cảnh báo (Alerts Timeline)?",
+    );
+    if (!confirm) return;
+    try {
+      await updateFamilyPath(familyId, "", { events: null });
+      pushToast("Alerts timeline reset.");
+    } catch (error) {
+      console.error(error);
+      pushToast("Failed to reset timeline.");
+    }
+  }
+
   async function handleSendEmergency() {
     setShowEmergencyModal(false);
 
@@ -863,6 +937,8 @@ export default function App() {
   async function handleSimulateLocation(status: "in_home" | "out_of_home") {
     try {
       const isOutside = status === "out_of_home";
+      // Model BLE: chỉ đổi trạng thái trong/ngoài nhà (kiosk quét tag). Không có
+      // toạ độ GPS — giống hệt khi kiosk mất tín hiệu tag ở nhà.
       await updateFamilyPath(familyId, "elder", {
         status: status,
         locationLabel: isOutside ? "Outside Safe Zone" : "In Home",
@@ -1007,6 +1083,7 @@ export default function App() {
           onConnectTag={(id) => void handleConnectTag(id)}
           onDisconnectTag={(id) => void handleDisconnectTag(id)}
           onClearCompleted={() => void handleClearCompleted()}
+          onResetTimeline={() => void handleResetTimeline()}
         />
       );
     }
@@ -1040,6 +1117,7 @@ export default function App() {
       <HomeScreen
         elder={elder}
         kiosk={kiosk}
+        home={home}
         trackerAlert={trackerAlert}
         completedRoutines={completedRoutines}
         upcomingRoutine={upcomingRoutine}

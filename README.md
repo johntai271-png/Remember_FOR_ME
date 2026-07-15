@@ -1,414 +1,225 @@
-# Remember.For.Me — Ambient Elderly Care Ecosystem
+# Remember.For.Me — Hệ sinh thái chăm sóc người cao tuổi tại nhà
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-MVP%20Demo-brightgreen?style=for-the-badge" />
   <img src="https://img.shields.io/badge/Firebase-Realtime%20DB-orange?style=for-the-badge&logo=firebase" />
   <img src="https://img.shields.io/badge/React-Vite-61DAFB?style=for-the-badge&logo=react" />
-  <img src="https://img.shields.io/badge/Flutter-Web%20%2F%20Android-02569B?style=for-the-badge&logo=flutter" />
+  <img src="https://img.shields.io/badge/Flutter-Android-02569B?style=for-the-badge&logo=flutter" />
 </p>
 
-> **Remember.For.Me** is a cross-platform ambient care system designed to help elderly individuals with cognitive decline (Alzheimer's, dementia) stay safe at home — while giving family caregivers real-time visibility and peace of mind.
+> **Remember.For.Me** giúp người cao tuổi (đặc biệt là người suy giảm nhận thức — Alzheimer, sa sút trí tuệ) sống an toàn tại nhà, đồng thời cho người thân theo dõi và hỗ trợ từ xa theo **thời gian thực**.
 
 ---
 
-## 📌 Table of Contents
+## 📌 Mục lục
 
-1. [Project Overview](#-project-overview)
-2. [System Architecture](#-system-architecture)
-3. [App Breakdown](#-app-breakdown)
-   - [Caregiver Portal (React Web)](#1-caregiver-portal--react-web)
-   - [Kiosk Screen (Flutter)](#2-patient-kiosk-screen--flutter)
-4. [Key Features](#-key-features)
-5. [Firebase Database Schema](#-firebase-database-schema)
-6. [Quick Start](#-quick-start)
-7. [Demo Guide](#-demo-guide)
-8. [Repository Structure](#-repository-structure)
+1. [Tổng quan](#-tổng-quan)
+2. [Kiến trúc](#-kiến-trúc)
+3. [Tính năng](#-tính-năng)
+4. [Cấu trúc thư mục](#-cấu-trúc-thư-mục)
+5. [Cài đặt & chạy](#-cài-đặt--chạy)
+6. [Hướng dẫn Demo](#-hướng-dẫn-demo)
+7. [Định vị bằng thẻ BLE (real hardware)](#-định-vị-bằng-thẻ-ble-real-hardware)
+8. [Firebase Schema](#-firebase-schema)
 9. [Tech Stack](#-tech-stack)
 
 ---
 
-## 🧭 Project Overview
+## 🧭 Tổng quan
 
-**Remember.For.Me** bridges the gap between remote caregiving and in-home ambient assistance. It targets families caring for elderly members with memory impairment who need gentle, non-intrusive daily support.
+Hệ thống gồm **hai ứng dụng** dùng chung **một Firebase Realtime Database** làm cầu nối — **không có server backend riêng**. Mọi giao tiếp diễn ra bằng cách đọc/ghi các node dưới `families/{familyId}`.
 
-The ecosystem consists of **two synchronized applications** sharing a **Firebase Realtime Database** as a live communication backbone:
-
-| Component | Platform | Role |
+| Thành phần | Nền tảng | Vai trò |
 |---|---|---|
-| **Caregiver Portal** | React Web App | Remote monitoring, routine management, alert control |
-| **Patient Kiosk** | Flutter (Android / Web) | Home ambient screen, TTS announcements, health display |
+| **Caregiver Portal** | React + Vite + TypeScript (Web) | Bảng điều khiển của người chăm sóc: theo dõi, quản lý lịch nhắc, nhận báo động |
+| **Patient Kiosk** | Flutter (Android APK chính; Web/Windows cho dev) | Màn hình của người già: đồng hồ lớn, đọc nhắc bằng giọng nói (TTS), hiển thị cảnh báo toàn màn hình |
 
-The system is designed for **zero-friction use by the elderly** — requiring no technical knowledge on their part — while giving caregivers powerful real-time controls from any device.
-
----
-
-## 🏗 System Architecture
-
-```
-┌─────────────────────────┐         ┌────────────────────────────────┐
-│   Caregiver Portal      │         │       Patient Kiosk            │
-│   (React + Vite)        │         │    (Flutter Web / Android)     │
-│                         │         │                                │
-│  • Dashboard overview   │◄───────►│  • Ambient home screen         │
-│  • Routine management   │         │  • TTS voice announcements     │
-│  • Vitals simulation    │  RTDB   │  • Health metrics display      │
-│  • BLE tag tracking     │◄──────► │  • Real-time routine timeline  │
-│  • Emergency SOS        │         │  • Alert overlay (fullscreen)  │
-│  • Geofence alerts      │         │  • Pairing via 6-digit PIN     │
-│  • Onboarding wizard    │         │                                │
-└─────────────────────────┘         └────────────────────────────────┘
-            │                                       │
-            └───────────────┬───────────────────────┘
-                            │
-               ┌────────────▼────────────┐
-               │  Firebase Realtime DB   │
-               │  families/{familyId}/   │
-               │  • elder/vitals         │
-               │  • tasks/               │
-               │  • emergency/           │
-               │  • tracker_alert/       │
-               │  • kiosk/               │
-               │  • ble_tags/            │
-               │  • events/              │
-               └─────────────────────────┘
-```
-
-### Data Flow (Live Demo)
-1. Caregiver configures a **daily routine** on the web portal and clicks **Trigger**.
-2. Firebase RTDB propagates the update instantly.
-3. Kiosk receives the update and displays a **fullscreen announcement overlay**.
-4. **Text-to-Speech reads the reminder aloud** (up to 3 times) in the appropriate language (English / Vietnamese, auto-detected).
-5. The elderly user taps **"Okay, I remember"** — or the overlay auto-dismisses after all TTS cycles.
-6. Task status is marked as `Completed` in Firebase and reflected live on the caregiver portal.
+Thiết kế để **người cao tuổi dùng được mà không cần biết công nghệ**, còn người chăm sóc thì điều khiển thời gian thực từ bất kỳ thiết bị nào.
 
 ---
 
-## 📱 App Breakdown
+## 🏗 Kiến trúc
 
-### 1. Caregiver Portal — React Web
+```
+┌──────────────────────────┐        ┌──────────────────────────┐
+│   Caregiver Portal       │        │      Patient Kiosk        │
+│   (React + Vite)         │◄──────►│   (Flutter / Android)     │
+│  • Theo dõi vitals/vị trí│  RTDB  │  • Đồng hồ + lịch nhắc     │
+│  • Quản lý lịch nhắc      │◄──────►│  • Đọc nhắc bằng TTS       │
+│  • Báo động (chuông +     │        │  • Overlay toàn màn hình  │
+│    thông báo hệ thống)   │        │  • Quét thẻ BLE (Android) │
+└──────────────────────────┘        └──────────────────────────┘
+             │                                   │
+             └─────────────┬─────────────────────┘
+                 ┌──────────▼──────────┐
+                 │  Firebase RTDB      │
+                 │  families/{id}/     │
+                 │  elder · tasks ·    │
+                 │  emergency · kiosk ·│
+                 │  tracker_alert ·    │
+                 │  ble · events · home│
+                 └─────────────────────┘
+```
 
-**Location:** `caregiver/`  
-**URL (local dev):** `http://localhost:8080`
+**Luồng nhắc nhở (có xác nhận thật):**
+1. Caregiver bấm **Trigger** → transaction đặt `tasks/{id}/is_triggered = true`.
+2. Kiosk lắng nghe `tasks` → hiện overlay toàn màn hình + đọc `text` bằng TTS.
+3. Người già bấm **"Đã hiểu"** (hoặc TTS đọc xong) → Kiosk ghi `status: "Completed"` → Caregiver thấy **Completed** ngay (ack thật, không delay giả).
 
-The Caregiver Portal is a premium-grade responsive web dashboard built for family members and professional caregivers to remotely manage care for their elderly relative.
+**Nhắc tự động:** Kiosk kiểm tra mỗi 30s; task có `is_auto == true` tới giờ (`scheduled_time`) sẽ tự bật `is_triggered`, mỗi task 1 lần/ngày.
 
-#### 🔑 Core Sections
+---
 
-| Tab | Description |
+## ✨ Tính năng
+
+| Tính năng | Chi tiết |
 |---|---|
-| **Home** | Real-time overview: elder vitals, location status, upcoming routines, BLE tag statuses, alert feed |
-| **Manage** | Full CRUD management for daily routines, BLE asset tags; view and clear completed tasks |
-| **Settings** | Account management, Kiosk pairing, profile editing, geofence config, demo controls |
-
-#### ✨ Notable Capabilities
-- **Onboarding Setup Wizard** — 3-step guided wizard for new accounts: Kiosk pairing → Family names → First routine
-- **Unique Family Isolation** — Each new account auto-generates a unique `familyId` so data never overlaps
-- **Demo Simulation Panel** — Home tab panel lets you simulate geofence breach (`Wander Alert`) or abnormal vitals (120 bpm High / 45 bpm Low) live during a pitch
-- **Emergency Buzzer** — Web Audio API synthesizes a dual-tone siren (`880Hz`/`660Hz`) in the caregiver's browser whenever a geofence or vitals alert fires
-- **Clear Completed Routines** — Bulk-delete all completed routines from Firebase to keep the UI clean
-- **Re-run Setup Wizard** — Settings → Demo controls → allows re-demonstrating the onboarding flow without creating a new account
-
----
-
-### 2. Patient Kiosk Screen — Flutter
-
-**Location:** `kiosk_app/`  
-**URL (local web):** `http://localhost:8081`  
-**APK (Android):** `kiosk-app-release.apk` (root of repository)
-
-The Patient Kiosk is a Flutter application designed to run full-screen on a home TV, tablet, or dedicated Android device. It serves as the elder's ambient companion — always on, always visible, never intrusive.
-
-#### 🖥️ Screen Tabs
-
-| Tab | Description |
-|---|---|
-| **Home** | Digital clock + date, greeting message, reassurance text, today's upcoming routine card |
-| **Reminders** | Full timeline of scheduled routines grouped by time period (Morning / Afternoon / Evening / Night) |
-| **Health** | Live heart rate (bpm), location safety status (In Home / Outside Safe Zone), kiosk connection health |
-
-#### 🔔 Alert Overlay
-When a routine is triggered or an emergency SOS is sent, the Kiosk displays a **full-screen animated overlay** with:
-- Pulsing sound-wave animation rings
-- Large-print reminder message (≥36px font for accessibility)
-- Text-to-Speech announcement repeated up to 3 times
-- Auto-dismiss after all TTS cycles complete (no action required from the elderly user)
-- **"Okay, I remember"** button for early dismissal
-
-#### 🔧 Pairing System
-- Kiosk generates a random **6-digit PIN** on first launch and publishes it to Firebase `pairing_codes/`
-- Caregiver enters the PIN in the Onboarding Wizard → Kiosk receives `familyId` and saves it locally
-- Subsequent launches skip the pairing screen automatically
-- PIN is **clickable/copyable** directly in the browser
-
-#### 🛠️ Debug & Simulation Panel
-Long-press the **"Remember.For.Me"** header on the Kiosk home screen (≥1 second) to open the hidden simulation panel:
-- **Simulate: At Home** — sets elder status to `in_home`
-- **Simulate: Away (Wandering)** — sets elder status to `out_of_home`, triggers geofence alert
-- **Reset Kiosk Pairing (Logout)** — clears local `family_id` and returns to the PIN pairing screen for demo resets
+| 🔄 **Đồng bộ thời gian thực** | Dưới 1 giây qua Firebase RTDB |
+| 🔊 **TTS đọc nhắc** | Kiosk đọc to lời nhắc; overlay chữ lớn (≥36px) cho dễ nhìn |
+| 📍 **Định vị "ra khỏi nhà"** | Kiosk (Android) quét **thẻ BLE** người già đeo; mất tín hiệu → `out_of_home` |
+| 🗺️ **Bản đồ an toàn** | Leaflet + OpenStreetMap: hiện vùng an toàn quanh nhà, đổi đỏ khi ra ngoài |
+| 📲 **Báo vào app người con** | Ra khỏi nhà **hoặc** nhịp tim cao/thấp → Caregiver **kêu chuông + banner đỏ + thông báo hệ thống** bật lên |
+| 🚨 **Emergency SOS** | Caregiver bấm SOS → Kiosk khoá màn hình đỏ + đọc thông báo khẩn cấp |
+| ❤️ **Vitals** | Nhịp tim mô phỏng; mô phỏng cao (120) / thấp (45) để demo |
+| 🧹 **Reset Timeline** | Nút xoá toàn bộ dòng cảnh báo (Alerts Timeline) để demo lại sạch |
+| 🔗 **Ghép nối Kiosk** | Mã PIN 6 số, hoặc nút **"Bỏ qua · Demo với family_001"** để demo nhanh |
+| 🎮 **Demo Simulation Panel** | Mô phỏng Wander / vitals cao–thấp ngay khi pitch, không cần phần cứng |
 
 ---
 
-## ✅ Key Features
-
-| Feature | Details |
-|---|---|
-| 🔄 **Real-Time Sync** | Sub-second data propagation between portal and kiosk via Firebase RTDB |
-| 🔊 **Smart TTS** | Auto-detects language (Vietnamese/English) from reminder text and selects the matching TTS voice |
-| 🚨 **Emergency SOS** | Caregiver triggers one-tap SOS → Kiosk locks screen with red emergency overlay + loud voice alert |
-| 📍 **Geofence Simulation** | Simulate elder leaving the safe zone, triggering visual + audio alerts on caregiver portal |
-| ❤️ **Vitals Override** | Simulate dangerous heart rates (120 bpm high / 45 bpm low) for live demo presentations |
-| 🔔 **Audio Buzzer** | Web Audio API synthesizes emergency siren in caregiver browser — zero external dependencies |
-| 📱 **BLE Asset Tags** | Track important items (wallet, keys, medicine bag) with virtual Bluetooth tags |
-| 🏠 **Onboarding Wizard** | Guided 3-step setup for new families: link Kiosk → set names → create first routine |
-| 🧹 **Auto-hide Completed** | Completed routines disappear from active list, collapsible into a "Completed" drawer |
-| 🔐 **Auth Isolation** | Firebase Auth + unique familyId ensures each household's data is fully isolated |
-
----
-
-## 🗄 Firebase Database Schema
-
-All data is scoped under `families/{familyId}/` to ensure multi-household isolation.
-
-```json
-families/
-  {familyId}/
-    elder/
-      name: "Grandma Lan"
-      vitals/
-        heartRate: 72
-        status: "Normal"       // "Normal" | "High" | "Low"
-        isOverride: false      // true = Kiosk pauses its own simulation
-      location/
-        status: "in_home"      // "in_home" | "out_of_home"
-        safeZoneName: "Home"
-
-    tasks/
-      {taskId}/
-        name: "Take morning medication"
-        scheduled_time: "08:00"
-        day_part: "Morning"
-        status: "Pending"      // "Pending" | "Triggered" | "Completed"
-        is_auto: true
-        voice_text: "Time to take your morning pills!"
-
-    emergency/
-      is_triggered: false
-      message: "Emergency! Your caregiver is calling."
-      triggeredAt: 1720000000000
-
-    tracker_alert/
-      is_active: false
-      message: "Elder has left the safe zone!"
-      timestamp: 1720000000000
-
-    kiosk/
-      online: true
-      lastHeartbeatAt: 1720000000000
-      name: "Living Room Kiosk"
-
-    ble_tags/
-      {tagId}/
-        name: "Leather Wallet Tag"
-        location: "Bedroom drawer"
-        status: "safe"         // "safe" | "away"
-        connectionStatus: "connected"
-
-    events/
-      {eventId}/
-        type: "trigger"        // "trigger" | "complete" | "emergency" | "tracker_alert"
-        title: "Morning Medication triggered"
-        message: "..."
-        timestamp: 1720000000000
-
-onboarding_completed: true
-pairing_codes/
-  {6-digit-PIN}/
-    familyId: ""
-    createdAt: 1720000000000
-```
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-| Tool | Version | Purpose |
-|---|---|---|
-| Node.js | ≥ 18.x | Caregiver Portal |
-| npm | ≥ 9.x | Package manager |
-| Flutter SDK | ≥ 3.22 | Kiosk App |
-| Python | ≥ 3.x | Static web server (optional) |
-
----
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/your-org/remember-for-me.git
-cd remember-for-me
-```
-
----
-
-### 2. Launch the Caregiver Portal
-
-```bash
-cd caregiver
-npm install
-npm run dev
-```
-
-> ✅ Open **[http://localhost:8080](http://localhost:8080)** in your browser.
-
-To log in, either:
-- Click **"Continue as Guest"** to instantly explore the demo dashboard (`family_001`)
-- Click **"Sign Up"** to create a new family account and run through the Onboarding Wizard
-
----
-
-### 3. Launch the Patient Kiosk
-
-**Option A — Run via Flutter (Chrome, recommended for demo):**
-```bash
-cd kiosk_app
-flutter pub get
-flutter run -d chrome --web-port 8081
-```
-
-**Option B — Serve pre-built web assets:**
-```bash
-cd kiosk_app
-flutter build web --no-tree-shake-icons
-cd build/web
-python -m http.server 8081
-```
-
-> ✅ Open **[http://localhost:8081](http://localhost:8081)** in a second browser tab.
-
-**Option C — Android Tablet / TV (Physical Device):**
-Install the precompiled APK at the root of the repository:
-```bash
-adb install kiosk-app-release.apk
-```
-
----
-
-### 4. Link Kiosk to Caregiver Account
-
-1. Open the Kiosk in browser — a **6-digit PIN** is displayed. Click to copy it.
-2. In the Caregiver Portal, sign up / log in → the **Onboarding Wizard** launches automatically.
-3. Enter the PIN in Step 1 → click **Link Kiosk** → both apps are now paired!
-4. Complete Steps 2 & 3 (enter names → create first routine).
-5. Both apps are fully synced and ready.
-
----
-
-## 🎬 Demo Guide
-
-> Perfect for live pitching at competitions or investor demos.
-
-### Scenario A — Routine Reminder
-1. In the **Caregiver Portal → Manage tab**, click **Trigger** on any routine.
-2. Watch the **Kiosk screen** instantly show a fullscreen overlay with animated sound waves.
-3. Hear the **TTS voice** read the reminder aloud (English or Vietnamese, auto-detected).
-4. The overlay auto-dismisses after 3 repetitions.
-
-### Scenario B — Geofence Wander Alert
-1. On the **Home tab**, find the **Demo Simulation Panel** at the bottom.
-2. Click **🚶 Wander Alert** → the elder's map turns red, the Caregiver Portal shows danger status.
-3. The caregiver's browser plays an **emergency buzzer sound** (beep beep beep beep).
-4. Click **🏠 In Home** to reset.
-
-### Scenario C — Abnormal Vitals
-1. On the **Demo Simulation Panel**, click **🔴 120 bpm (High)** or **🔵 45 bpm (Low)**.
-2. The vitals card on the portal updates instantly, the feed logs a warning event.
-3. The Kiosk's Health tab also reflects the abnormal reading in real time.
-4. Click **🟢 72 bpm (Normal)** to reset.
-
-### Scenario D — Emergency SOS
-1. Click the **red SOS button** anywhere on the Caregiver Portal.
-2. Confirm the alert dialog.
-3. The Kiosk immediately shows a **red fullscreen emergency overlay**.
-4. The TTS voice announces: *"Emergency! Your caregiver is calling. Please look at the screen."*
-
-### Reset for Next Demo Run
-- **Caregiver**: Settings → Demo controls → **Re-run Setup Wizard**
-- **Kiosk**: Long-press header → **Reset Kiosk Pairing (Logout)**
-- Both apps are back to onboarding state, ready for a fresh run.
-
----
-
-## 📂 Repository Structure
+## 📂 Cấu trúc thư mục
 
 ```
 REMEMBER.FOR.ME/
-├── caregiver/                    # Caregiver Web Dashboard (React + Vite)
-│   ├── src/
-│   │   ├── App.tsx               # Main state controller, Firebase bindings, all handlers
-│   │   ├── firebase.ts           # Firebase Auth & Realtime Database helpers
-│   │   ├── screens/
-│   │   │   └── HomeScreen.tsx    # Home tab, Management tab, Simulation Panel
-│   │   ├── components/           # Shared UI components (Header, Navigation, Modals)
-│   │   └── types.ts              # TypeScript type definitions
-│   ├── vite.config.ts            # Vite server configuration (Port 8080)
-│   └── package.json
+├── caregiver/                     # Dashboard người chăm sóc (React + Vite)
+│   └── src/
+│       ├── App.tsx                # State + Firebase bindings + toàn bộ handlers
+│       ├── firebase.ts            # Cấu hình & helper Firebase
+│       ├── screens/HomeScreen.tsx # Tab Home + Manage + Simulation Panel
+│       ├── components/
+│       │   └── LiveSafetyMap.tsx  # Bản đồ an toàn (Leaflet + OSM)
+│       └── utils.ts               # Haversine, format, geo helpers
 │
-├── kiosk_app/                    # Patient Kiosk Application (Flutter)
-│   ├── lib/
-│   │   ├── main.dart             # App initialization, routing, pairing logic
-│   │   ├── firebase_options.dart # Multi-platform Firebase credentials
-│   │   ├── services/
-│   │   │   └── kiosk_sync.dart   # RTDB listener, vitals simulation, BLE scan, alert stream
-│   │   ├── screens/
-│   │   │   ├── kiosk_home.dart   # Main shell: navigation, TTS loop, smart language detection
-│   │   │   ├── alert_overlay.dart # Animated announcement overlay (routine + emergency)
-│   │   │   ├── pairing_screen.dart # 6-digit PIN pairing screen (copyable, Firebase listener)
-│   │   │   └── debug_panel.dart  # Hidden simulation panel (geofence, vitals, reset)
-│   │   ├── tabs/
-│   │   │   ├── home_tab.dart     # Clock, greeting, today's routine card
-│   │   │   ├── reminders_tab.dart # Full schedule timeline grouped by day part
-│   │   │   └── health_tab.dart   # Vitals & location status cards
-│   │   ├── models/task.dart       # Task data model
-│   │   ├── theme/app_colors.dart  # Warm cream color palette
-│   │   └── widgets/              # Reusable UI widgets
-│   ├── build/web/                # Pre-built web assets (served via python http.server)
-│   └── pubspec.yaml
+├── kiosk_app/                     # App màn hình người già (Flutter)
+│   └── lib/
+│       ├── services/kiosk_sync.dart   # Listener Firebase, heartbeat, quét BLE, ack
+│       ├── screens/
+│       │   ├── kiosk_home.dart        # Dashboard cụ + TTS
+│       │   ├── alert_overlay.dart     # Overlay nhắc/khẩn cấp toàn màn hình
+│       │   ├── pairing_screen.dart    # Ghép nối PIN + nút Demo
+│       │   └── debug_panel.dart       # Panel test ẩn (giữ tiêu đề 2s)
+│       └── tabs/                       # Home / Reminders / Health
 │
 ├── docs/
-│   └── firebase_schema.json      # Database schema reference
+│   ├── Huong-Dan-Demo.docx            # Hướng dẫn demo chi tiết (tiếng Việt)
+│   ├── Remember-For-Me-Tom-Tat-Du-An.docx
+│   └── firebase_schema.json
 │
-├── kiosk-app-release.apk         # Pre-compiled Android APK for physical device deploy
-├── DEVELOPER_ONBOARDING.md       # Detailed dev environment setup guide
-├── PROJECT_SUMMARY.md            # In-depth architecture analysis
-└── README.md                     # This file
+├── kiosk-app-release.apk          # APK Android build sẵn để demo
+├── DEMO_CHECKLIST.md              # Checklist chạy demo (xem trước khi trình bày)
+└── README.md
+```
+
+> Ngoài ra ở gốc repo có `app.js`, `index.html`, `style.css` — bản **mô phỏng offline** (vanilla JS) chạy thẳng trong trình duyệt, không cần Firebase; dùng để xem nhanh giao diện.
+
+---
+
+## 🚀 Cài đặt & chạy
+
+### Yêu cầu
+- Node.js ≥ 18, npm ≥ 9 (cho Caregiver)
+- Flutter SDK ≥ 3.22 (cho Kiosk); Android SDK nếu build APK
+
+### 1. Caregiver Portal (web)
+```bash
+cd caregiver
+npm install
+npm run dev          # chạy ở http://localhost:8080
+```
+Vào web → **"Continue as Guest"** để xem demo ngay (`family_001`).
+
+> ⚠️ `npm run build` hiện còn vài lỗi type cũ **không liên quan tính năng** — dùng `npm run dev` để demo, hoặc `npx vite build` để kiểm tra bundle.
+
+### 2. Patient Kiosk
+**Android (khuyến nghị cho demo):**
+```bash
+adb install kiosk-app-release.apk       # hoặc chép file APK vào máy rồi cài
+```
+Mở app → cho phép Bluetooth + Vị trí → bấm **"Bỏ qua · Demo với family_001"**.
+
+**Chrome (dev UI, KHÔNG quét BLE):**
+```bash
+cd kiosk_app
+flutter pub get
+flutter run -d chrome --web-port 8090
+```
+
+---
+
+## 🎬 Hướng dẫn Demo
+
+Chi tiết đầy đủ trong **[docs/Huong-Dan-Demo.docx](docs/Huong-Dan-Demo.docx)** và **[DEMO_CHECKLIST.md](DEMO_CHECKLIST.md)**.
+
+**Kịch bản A — Nhắc lịch:** Manage → thêm/bấm **Trigger** → Kiosk hiện overlay + đọc to → cụ bấm "Đã hiểu" → web thành **Completed**.
+
+**Kịch bản B — Ra khỏi nhà (không cần phần cứng):** Home → **Demo Simulation Panel** → **🚶 Wander Alert** → bản đồ đỏ + **chuông + thông báo "🚨 ra khỏi nhà"** trên Caregiver.
+
+**Kịch bản C — Nhịp tim bất thường:** bấm **120 (High)** / **45 (Low)** → thông báo "❤️ Nhịp tim bất thường".
+
+**Kịch bản D — SOS:** bấm nút SOS → Kiosk hiện đỏ toàn màn hình + đọc thông báo.
+
+**Reset để demo lại:** tab Manage → nút **Reset** trên "Alerts Timeline"; Kiosk → giữ tiêu đề 2s → panel debug.
+
+---
+
+## 📡 Định vị bằng thẻ BLE (real hardware)
+
+Định vị "ra khỏi nhà" **không dùng GPS**, mà dùng **proximity BLE**:
+
+- **Kiosk chạy trên máy Android** = máy quét cố định ở nhà.
+- Người già đeo **1 thẻ iBeacon** nhỏ (pin CR2032). Thẻ ở gần = *in_home*; đi xa ~10–15m mất sóng = *out_of_home* → báo Caregiver.
+- Kiosk khớp thẻ theo **MAC / tên / Service UUID / UUID iBeacon** (đọc cả beacon do iPhone phát).
+
+**Cấu hình:** cài **nRF Connect** để đọc UUID/MAC thẻ → đặt `ble/tagId` = định danh đó, `ble/enabled = true`.
+
+> ⚠️ Quét BLE **chỉ chạy trên app native** (Android). Bản Chrome/web **không quét được** — khi đó dùng nút giả lập "Wander Alert" hoặc panel debug của Kiosk.
+> Mua thẻ: iBeacon keyfob (Holy-IOT / MinewTech / Feasycom). **KHÔNG** dùng AirTag / Tile / SmartTag (hệ đóng, app tự viết không đọc được).
+
+---
+
+## 🗄 Firebase Schema
+
+Dữ liệu dưới `families/{familyId}/` (demo dùng `family_001`):
+
+```jsonc
+families/family_001/
+  elder/       { name, status: "in_home"|"out_of_home", lastSeenAt,
+                 vitals: { status, heartRateBpm, updatedAt } }
+  tasks/{id}/  { name, scheduled_time, is_auto, status, text,
+                 is_triggered, triggeredAt, spokenAt, completedAt, triggerMode }
+  emergency/   { is_triggered, message, triggeredAt }
+  tracker_alert/ { is_active, type, message, severity, safeZoneStatus, source }
+  kiosk/       { online, lastHeartbeatAt }
+  ble/         { enabled, tagId }
+  home/        { lat, lng, radiusMeters, label }   // tâm + bán kính vùng an toàn
+  events/{id}/ { type, title, message, timestamp, by }
+pairing_codes/{PIN}/ { familyId, createdAt }
 ```
 
 ---
 
 ## 🛠 Tech Stack
 
-| Layer | Technology | Purpose |
-|---|---|---|
-| **Caregiver Frontend** | React 18 + Vite + TypeScript | Web dashboard framework |
-| **Caregiver Styling** | Vanilla CSS + Custom Design System | Premium UI with glassmorphism, animations |
-| **Kiosk App** | Flutter 3.22 (Dart) | Cross-platform kiosk application |
-| **Kiosk TTS** | flutter_tts 4.x | Text-to-speech voice announcements |
-| **Database & Auth** | Firebase Realtime Database + Firebase Auth | Real-time sync, user authentication |
-| **Audio Alerts** | Web Audio API (browser-native) | Emergency siren synthesis — zero dependencies |
-| **Icons** | Lucide React | Caregiver portal icons |
-| **Fonts** | Google Fonts (Inter) | Typography |
-| **State Management** | React hooks (useState, useEffect, useRef) | Caregiver portal state |
-| **Build Tools** | Vite (caregiver), Flutter build (kiosk) | Development & production builds |
+| Lớp | Công nghệ |
+|---|---|
+| Caregiver | React 18 + Vite + TypeScript + Tailwind |
+| Bản đồ | Leaflet + OpenStreetMap (miễn phí, không API key) |
+| Kiosk | Flutter (Dart), flutter_tts, flutter_blue_plus |
+| Backend | Firebase Realtime Database + Firebase Auth |
+| Báo động | Web Audio API + Notification API (trình duyệt) |
 
 ---
 
 ## 👥 Team
 
-Built for the **Bách Khoa Innovation Challenge 2025** by a team passionate about making technology accessible and meaningful for aging communities.
-
----
-
-## 📄 License
-
-This project is developed as an academic MVP prototype. All rights reserved to the development team.
+Xây dựng cho **Bách Khoa Innovation Challenge 2025** — công nghệ dễ tiếp cận, ý nghĩa cho người cao tuổi.

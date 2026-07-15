@@ -47,6 +47,68 @@ export function formatClock(timeValue: string) {
   return `${String(displayHour).padStart(2, "0")}:${String(minute).padStart(2, "0")} ${period}`;
 }
 
+// ─── Geo helpers (định vị người) ─────────────────────────────────────────────
+
+export type LatLng = { lat: number; lng: number };
+
+/** Khoảng cách giữa 2 toạ độ (mét) theo công thức Haversine. */
+export function haversineMeters(a: LatLng, b: LatLng): number {
+  const R = 6371000; // bán kính Trái Đất (m)
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+/** Định dạng khoảng cách dễ đọc: 85 m / 1.2 km. */
+export function formatDistance(meters: number): string {
+  if (!Number.isFinite(meters)) return "—";
+  if (meters < 1000) return `${Math.round(meters)} m`;
+  return `${(meters / 1000).toFixed(meters < 10000 ? 2 : 1)} km`;
+}
+
+/** Toạ độ hợp lệ (kiểm tra thô để tránh vẽ điểm rác lên map). */
+export function isValidLatLng(value: any): value is LatLng {
+  return (
+    value &&
+    typeof value.lat === "number" &&
+    typeof value.lng === "number" &&
+    Number.isFinite(value.lat) &&
+    Number.isFinite(value.lng) &&
+    Math.abs(value.lat) <= 90 &&
+    Math.abs(value.lng) <= 180
+  );
+}
+
+/**
+ * Dịch một toạ độ đi `meters` mét theo hướng `bearingDeg` (0 = Bắc, 90 = Đông).
+ * Dùng để tạo điểm mô phỏng "ra khỏi vùng an toàn" cách nhà một quãng thật.
+ */
+export function offsetLatLng(origin: LatLng, meters: number, bearingDeg: number): LatLng {
+  const R = 6371000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const toDeg = (r: number) => (r * 180) / Math.PI;
+  const brng = toRad(bearingDeg);
+  const lat1 = toRad(origin.lat);
+  const lng1 = toRad(origin.lng);
+  const dR = meters / R;
+  const lat2 = Math.asin(
+    Math.sin(lat1) * Math.cos(dR) + Math.cos(lat1) * Math.sin(dR) * Math.cos(brng),
+  );
+  const lng2 =
+    lng1 +
+    Math.atan2(
+      Math.sin(brng) * Math.sin(dR) * Math.cos(lat1),
+      Math.cos(dR) - Math.sin(lat1) * Math.sin(lat2),
+    );
+  return { lat: toDeg(lat2), lng: toDeg(lng2) };
+}
+
 export function formatTaskNote(task: any) {
   const startedAt = task.triggeredAt || task.lastTriggeredAt;
   if (task.status === "Running" && startedAt) {

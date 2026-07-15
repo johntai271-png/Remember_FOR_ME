@@ -39,7 +39,7 @@ class HomeTab extends StatelessWidget {
                 children: [
                   _ClockSection(now: now, elderName: sync.elderName),
                   const SizedBox(height: 24),
-                  _WeatherWidget(),
+                  const _WeatherWidget(),
                   const SizedBox(height: 24),
                   _ReassuranceBox(elderName: sync.elderName),
                 ],
@@ -66,7 +66,7 @@ class HomeTab extends StatelessWidget {
         children: [
           _ClockSection(now: now, elderName: sync.elderName),
           const SizedBox(height: 20),
-          _WeatherWidget(),
+          const _WeatherWidget(),
           const SizedBox(height: 20),
           _ReassuranceBox(elderName: sync.elderName),
           const SizedBox(height: 24),
@@ -162,15 +162,15 @@ class _WeatherWidget extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         boxShadow: const [AppColors.cardShadow],
       ),
-      child: Row(
+      child: const Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('☀️', style: TextStyle(fontSize: 36)),
-          const SizedBox(width: 20),
+          Text('☀️', style: TextStyle(fontSize: 36)),
+          SizedBox(width: 20),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 '31°C',
                 style: TextStyle(
                   fontSize: 28,
@@ -180,7 +180,7 @@ class _WeatherWidget extends StatelessWidget {
               ),
               Text(
                 'Sunny & warm',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 15,
                   color: AppColors.inkSoft,
                 ),
@@ -210,19 +210,19 @@ class _ReassuranceBox extends StatelessWidget {
         border: Border.all(color: AppColors.reassuranceBorder),
         borderRadius: BorderRadius.circular(20),
       ),
-      child: Column(
+      child: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             '👋 You are Safe at Home',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w700,
               color: AppColors.reassuranceTitle,
             ),
           ),
-          const SizedBox(height: 8),
-          const Text(
+          SizedBox(height: 8),
+          Text(
             'Your caregiver is keeping watch and will contact you if needed. '
             'Please relax and follow your schedule today!',
             style: TextStyle(

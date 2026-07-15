@@ -30,6 +30,21 @@ class _PairingScreenState extends State<PairingScreen> {
     _generateAndPublishPin();
   }
 
+  /// Bỏ qua ghép nối — vào thẳng chế độ demo với `family_001`
+  /// (khớp với "Continue as Guest" bên web caregiver).
+  Future<void> _skipToDemo() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('family_id', 'family_001');
+    } catch (e) {
+      debugPrint('Save demo family_id failed: $e');
+    }
+    if (mounted) {
+      Navigator.of(context)
+          .pushReplacementNamed('/home', arguments: 'family_001');
+    }
+  }
+
   void _generateAndPublishPin() {
     setState(() {
       _isLoading = true;
@@ -104,7 +119,7 @@ class _PairingScreenState extends State<PairingScreen> {
                 Container(
                   width: 72,
                   height: 72,
-                  decoration: BoxDecoration(
+                  decoration: const BoxDecoration(
                     color: AppColors.lavender,
                     shape: BoxShape.circle,
                   ),
@@ -195,6 +210,20 @@ class _PairingScreenState extends State<PairingScreen> {
                       ),
                     ),
                   ],
+                ),
+                const SizedBox(height: 28),
+
+                // Lối tắt demo: vào thẳng family_001 (không cần ghép nối)
+                TextButton(
+                  onPressed: _skipToDemo,
+                  child: Text(
+                    'Bỏ qua · Demo với family_001',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.brand.withValues(alpha: 0.9),
+                    ),
+                  ),
                 ),
               ],
             ),

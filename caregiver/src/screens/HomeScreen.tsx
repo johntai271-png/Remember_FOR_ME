@@ -18,12 +18,14 @@ import {
 } from "lucide-react";
 
 import { InfoBox } from "../components/common";
+import { LiveSafetyMap, type HomeZone } from "../components/LiveSafetyMap";
 import type { AlertFeedItem, BleTag, Routine, ViewMode } from "../types";
 import { formatClock, formatRelativeTime, formatTimestamp } from "../utils";
 
 export function HomeScreen({
   elder,
   kiosk,
+  home,
   trackerAlert,
   completedRoutines,
   upcomingRoutine,
@@ -34,6 +36,7 @@ export function HomeScreen({
 }: {
   elder: any;
   kiosk: any;
+  home: HomeZone;
   trackerAlert: any;
   completedRoutines: Routine[];
   upcomingRoutine: Routine | null;
@@ -59,7 +62,7 @@ export function HomeScreen({
       <StatusCard elder={elder} kiosk={kiosk} />
 
       <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-        <SafetyMapCard elder={elder} trackerAlert={trackerAlert} />
+        <LiveSafetyMap elder={elder} home={home} trackerAlert={trackerAlert} />
         <TrackerAlertsCard trackerAlert={trackerAlert} />
       </section>
 
@@ -98,6 +101,7 @@ export function ManagementScreen({
   onConnectTag,
   onDisconnectTag,
   onClearCompleted,
+  onResetTimeline,
 }: {
   routines: Routine[];
   bleTags: BleTag[];
@@ -117,6 +121,7 @@ export function ManagementScreen({
   onConnectTag: (id: string) => void;
   onDisconnectTag: (id: string) => void;
   onClearCompleted: () => void;
+  onResetTimeline: () => void;
 }) {
   const [filterPeriod, setFilterPeriod] = useState<"all" | "morning" | "afternoon" | "evening">("all");
   const [showCompletedList, setShowCompletedList] = useState(false);
@@ -154,7 +159,7 @@ export function ManagementScreen({
           onConnectTag={onConnectTag}
           onDisconnectTag={onDisconnectTag}
         />
-        <ActivityFeedCard feedItems={feedItems} />
+        <ActivityFeedCard feedItems={feedItems} onReset={onResetTimeline} />
       </section>
 
       <section className="space-y-5">
@@ -346,83 +351,6 @@ function StatusCard({ elder, kiosk }: { elder: any; kiosk: any }) {
           label="Kiosk stream"
           value={isKioskOnline ? "Streaming live" : "Awaiting heartbeat"}
         />
-      </div>
-    </section>
-  );
-}
-
-function SafetyMapCard({ elder, trackerAlert }: { elder: any; trackerAlert: any }) {
-  const outsideSafeZone =
-    elder.status !== "in_home" ||
-    trackerAlert.safeZoneStatus === "outside" ||
-    trackerAlert.type === "out_of_safe_zone";
-  const trackerX = outsideSafeZone ? 276 : 200;
-  const trackerY = outsideSafeZone ? 92 : 150;
-
-  return (
-    <section className="card-shell p-4 sm:p-5 lg:p-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">Safety Map</h2>
-          <p className="mt-2 text-base font-medium text-slate-600 sm:text-[16px]">
-            Live geofence overview and home-zone status for the wearable tracker.
-          </p>
-        </div>
-        <span
-          className={`pill-button ${
-            outsideSafeZone ? "bg-[#ffd6d6] text-[#c91818]" : "bg-[#e9f6eb] text-action"
-          }`}
-        >
-          {outsideSafeZone ? "Outside zone" : "Inside zone"}
-        </span>
-      </div>
-
-      <div className="mt-6 overflow-hidden rounded-[28px] border border-slate-200/80 bg-[#0f172a] p-4">
-        <svg viewBox="0 0 400 300" className="h-[220px] w-full rounded-[20px] bg-[#0b1220]">
-          <defs>
-            <pattern id="care-grid" width="40" height="40" patternUnits="userSpaceOnUse">
-              <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
-            </pattern>
-          </defs>
-          <rect width="400" height="300" fill="url(#care-grid)" />
-          <rect x="0" y="82" width="400" height="14" fill="#1e293b" opacity="0.85" />
-          <rect x="0" y="210" width="400" height="14" fill="#1e293b" opacity="0.85" />
-          <rect x="122" y="0" width="14" height="300" fill="#1e293b" opacity="0.85" />
-          <rect x="282" y="0" width="14" height="300" fill="#1e293b" opacity="0.85" />
-          <circle
-            cx="200"
-            cy="150"
-            r="75"
-            fill={outsideSafeZone ? "rgba(239,68,68,0.08)" : "rgba(16,185,129,0.12)"}
-            stroke={outsideSafeZone ? "#ef4444" : "#10b981"}
-            strokeDasharray="4 4"
-          />
-          <circle cx="200" cy="150" r="10" fill="#3b82f6" opacity="0.35" />
-          <rect x="194" y="144" width="12" height="12" fill="#60a5fa" rx="2" />
-          <text x="213" y="154" fill="#cbd5e1" fontSize="9">HOME STATION</text>
-          <circle
-            cx={trackerX}
-            cy={trackerY}
-            r="13"
-            fill={outsideSafeZone ? "rgba(239,68,68,0.28)" : "rgba(59,130,246,0.32)"}
-          />
-          <circle cx={trackerX} cy={trackerY} r="6" fill={outsideSafeZone ? "#ef4444" : "#3b82f6"} />
-        </svg>
-      </div>
-
-      <div className="mt-5 grid gap-4 sm:grid-cols-2">
-        <div className="info-box">
-          <p className="text-xl font-medium text-slate-600 sm:text-[18px]">Coordinates</p>
-          <p className="mt-1 text-2xl font-extrabold text-slate-900 sm:text-[22px]">
-            {outsideSafeZone ? "1.3552° N, 103.8234° E" : "1.3521° N, 103.8198° E"}
-          </p>
-        </div>
-        <div className="info-box">
-          <p className="text-xl font-medium text-slate-600 sm:text-[18px]">Safety status</p>
-          <p className="mt-1 text-2xl font-extrabold text-slate-900 sm:text-[22px]">
-            {outsideSafeZone ? "Geofence breach detected" : "Safe inside home zone"}
-          </p>
-        </div>
       </div>
     </section>
   );
@@ -972,7 +900,13 @@ function RoutineCard({
   );
 }
 
-function ActivityFeedCard({ feedItems }: { feedItems: AlertFeedItem[] }) {
+function ActivityFeedCard({
+  feedItems,
+  onReset,
+}: {
+  feedItems: AlertFeedItem[];
+  onReset: () => void;
+}) {
   return (
     <section className="card-shell p-4 sm:p-5 lg:p-6">
       <div className="flex items-start justify-between gap-4">
@@ -982,11 +916,23 @@ function ActivityFeedCard({ feedItems }: { feedItems: AlertFeedItem[] }) {
             Timeline and action history are kept on the management page.
           </p>
         </div>
-        <BellRing className="h-8 w-8 text-brand" />
+        <button
+          type="button"
+          onClick={onReset}
+          className="flex shrink-0 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-base font-bold text-slate-700 transition hover:bg-slate-50"
+        >
+          <Trash2 className="h-5 w-5" />
+          Reset
+        </button>
       </div>
 
       <div className="mt-6 space-y-4">
-        {feedItems.map((item) => (
+        {feedItems.length === 0 ? (
+          <div className="info-box">
+            <p className="text-lg font-semibold text-slate-500">Chưa có cảnh báo nào.</p>
+          </div>
+        ) : (
+          feedItems.map((item) => (
           <div
             key={item.id}
             className="rounded-[24px] border border-slate-200/80 bg-lavender px-5 py-4"
@@ -1011,7 +957,8 @@ function ActivityFeedCard({ feedItems }: { feedItems: AlertFeedItem[] }) {
               </span>
             </div>
           </div>
-        ))}
+          ))
+        )}
       </div>
     </section>
   );

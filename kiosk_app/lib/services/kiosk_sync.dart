@@ -25,8 +25,8 @@ class KioskAlert {
   final bool isEmergency;
 }
 
-bool _isDesktopOrWeb() =>
-    kIsWeb || defaultTargetPlatform == TargetPlatform.windows;
+// BLE quét được trên Android/iOS/Windows(WinRT)/macOS — chỉ web là không hỗ trợ.
+bool _bleUnavailable() => kIsWeb;
 
 /// Gom toàn bộ logic đồng bộ Firebase của Kiosk:
 /// - Lắng nghe `tasks`, `emergency`, `elder/status`, `ble`.
@@ -330,20 +330,29 @@ class KioskSyncService extends ChangeNotifier {
   // --- BLE scanning (chỉ thiết bị thật) ---
   void _startBleScanLoop() {
     _bleScanTimer?.cancel();
-    if (_isDesktopOrWeb()) return;
+    if (_bleUnavailable()) return;
     _bleScanTimer =
         Timer.periodic(const Duration(seconds: 5), (_) => _scanForTag());
     _scanForTag();
   }
 
   Future<void> _scanForTag() async {
-    if (_isDesktopOrWeb() || !_bleEnabled) return;
+    if (_bleUnavailable() || !_bleEnabled) return;
 
     _bleResultsSub ??= FlutterBluePlus.scanResults.listen((results) {
+      final tag = _tagId.trim().toLowerCase();
+      if (tag.isEmpty) return;
       final found = results.any((result) {
-        final id = result.device.remoteId.toString();
-        final services = result.advertisementData.serviceUuids.join(',');
-        return id.contains(_tagId) || services.contains(_tagId);
+        final adv = result.advertisementData;
+        // Gom mọi định danh có thể khớp: MAC, tên quảng bá, Service UUID,
+        // và UUID iBeacon (nằm trong manufacturer-data của Apple 0x004C).
+        final haystack = <String>[
+          result.device.remoteId.toString(),
+          adv.advName,
+          adv.serviceUuids.join(','),
+          _extractIBeaconUuid(adv.manufacturerData) ?? '',
+        ].join('|').toLowerCase();
+        return haystack.contains(tag);
       });
       if (found) _markTagDetected();
     });
@@ -377,7 +386,7 @@ class KioskSyncService extends ChangeNotifier {
   void _stopBleScanLoop() {
     _bleScanTimer?.cancel();
     _bleMissingTimer?.cancel();
-    if (_isDesktopOrWeb()) return;
+    if (_bleUnavailable()) return;
     try {
       FlutterBluePlus.stopScan();
     } catch (_) {}
@@ -409,6 +418,20 @@ class KioskSyncService extends ChangeNotifier {
 
   Future<void> goOffline() async {
     await _familyRef.child('kiosk/online').set(false);
+  }
+
+  /// Trích UUID iBeacon từ manufacturer-data của Apple (company id 0x004C).
+  /// Định dạng iBeacon: [0x02, 0x15, UUID(16 byte), major(2), minor(2), tx(1)].
+  /// Nhờ đó kiosk bắt được beacon do iPhone phát (UUID không nằm ở serviceUuids).
+  static String? _extractIBeaconUuid(Map<int, List<int>> manufacturerData) {
+    final data = manufacturerData[0x004C];
+    if (data == null || data.length < 23) return null;
+    if (data[0] != 0x02 || data[1] != 0x15) return null; // tiền tố iBeacon
+    final bytes = data.sublist(2, 18);
+    final hex =
+        bytes.map((b) => (b & 0xff).toRadixString(16).padLeft(2, '0')).join();
+    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
+        '${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
   }
 
   static int? _toInt(Object? value) {
