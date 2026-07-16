@@ -12,6 +12,7 @@ dependencies:
   firebase_core: any
   firebase_database: any
   flutter_tts: any
+  audioplayers: any
   volume_controller: any
   wakelock_plus: any
   shared_preferences: any

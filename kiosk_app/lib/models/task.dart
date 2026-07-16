@@ -49,6 +49,7 @@ class KioskTask {
     this.triggeredAt,
     this.spokenAt,
     this.completedAt,
+    this.voiceClip,
   });
 
   final String id;
@@ -62,6 +63,9 @@ class KioskTask {
   final int? triggeredAt;
   final int? spokenAt;
   final int? completedAt;
+  // Giọng thu sẵn của gia đình (data URI base64). Nếu có, Kiosk phát giọng này
+  // thay cho giọng máy (TTS).
+  final String? voiceClip;
 
   bool get isCompleted => status.toLowerCase() == 'completed';
   bool get isRunning => status.toLowerCase() == 'running';
@@ -88,7 +92,13 @@ class KioskTask {
       triggeredAt: _asInt(data['triggeredAt']),
       spokenAt: _asInt(data['spokenAt']),
       completedAt: _asInt(data['completedAt']),
+      voiceClip: _asVoiceClip(data['voiceClip']),
     );
+  }
+
+  static String? _asVoiceClip(Object? value) {
+    if (value is String && value.trim().isNotEmpty) return value;
+    return null;
   }
 
   /// Parse toàn bộ node `tasks` thành danh sách, sort theo giờ.

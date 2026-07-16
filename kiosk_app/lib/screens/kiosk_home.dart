@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:volume_controller/volume_controller.dart';
@@ -24,8 +27,10 @@ class KioskHomePage extends StatefulWidget {
 class _KioskHomePageState extends State<KioskHomePage> {
   late final KioskSyncService _sync;
   final FlutterTts _tts = FlutterTts();
+  final AudioPlayer _audioPlayer = AudioPlayer();
 
   StreamSubscription<KioskAlert>? _alertSub;
+  StreamSubscription<String>? _dismissSub;
   Timer? _clockTimer;
   DateTime _now = DateTime.now();
   int _tabIndex = 0;
@@ -40,6 +45,7 @@ class _KioskHomePageState extends State<KioskHomePage> {
     _configureTts();
     _sync.start();
     _alertSub = _sync.alerts.listen(_handleAlert);
+    _dismissSub = _sync.dismissals.listen(_handleRemoteDismiss);
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() => _now = DateTime.now());
     });
@@ -111,8 +117,78 @@ class _KioskHomePageState extends State<KioskHomePage> {
 
     if (mounted) setState(() => _activeAlert = alert);
 
-    // Lặp lại TTS _ttsRepeatCount lần — người dùng có thể bấm "Đã hiểu"
-    // bất kỳ lúc nào để dừng sớm (kiểm tra _speaking sau mỗi lần).
+    // Ưu tiên giọng thu sẵn của gia đình; không có (hoặc lỗi) thì dùng giọng máy.
+    final clip = alert.voiceClip;
+    if (clip != null && clip.isNotEmpty) {
+      await _playVoiceClip(alert, clip);
+    } else {
+      await _speakTts(alert);
+    }
+
+    // Sau khi phát xong, tự động xác nhận nếu chưa bị dismiss
+    if (_activeAlert?.id == alert.id && _speaking.contains(alert.id)) {
+      await _dismissAlert(alert);
+    }
+  }
+
+  /// Phát giọng thu sẵn của gia đình (data URI base64), lặp 2 lần cho người cao
+  /// tuổi. Người dùng bấm "Đã hiểu" bất kỳ lúc nào để dừng sớm. Nếu phát lỗi
+  /// (định dạng không hỗ trợ...) thì tự động rơi về TTS.
+  Future<void> _playVoiceClip(KioskAlert alert, String clip) async {
+    // Giải mã data URI base64 -> bytes. Phát bằng BytesSource (ổn định trên web,
+    // tránh lỗi phát data URI của audioplayers trên trình duyệt).
+    final bytes = _decodeAudioBytes(clip);
+    if (bytes == null || bytes.isEmpty) {
+      debugPrint('voiceClip không giải mã được — chuyển sang TTS.');
+      if (_speaking.contains(alert.id)) await _speakTts(alert);
+      return;
+    }
+
+    const int repeat = 2;
+    var playedOk = false;
+    for (int round = 1; round <= repeat; round++) {
+      if (!_speaking.contains(alert.id)) break;
+      try {
+        // Lắng nghe "phát xong" TRƯỚC khi play để không bỏ lỡ với clip ngắn.
+        // Timeout chỉ là chốt an toàn (một số nền web không bắn onPlayerComplete);
+        // KHÔNG coi timeout là lỗi để tránh chen TTS đè lên giọng đang phát.
+        final done = _audioPlayer.onPlayerComplete.first
+            .then<bool>((_) => true)
+            .catchError((_) => false);
+        await _audioPlayer.stop();
+        await _audioPlayer.play(BytesSource(bytes));
+        playedOk = true;
+        debugPrint('Phát giọng gia đình lần $round/$repeat cho ${alert.id}');
+        await done.timeout(const Duration(seconds: 12), onTimeout: () => false);
+      } catch (e) {
+        debugPrint('Phát giọng gia đình lỗi ($e).');
+        break;
+      }
+      if (round < repeat && _speaking.contains(alert.id)) {
+        await Future.delayed(_ttsRepeatGap);
+      }
+    }
+
+    // Chỉ fallback TTS khi thực sự KHÔNG phát được clip (play ném lỗi).
+    if (!playedOk && _speaking.contains(alert.id)) {
+      await _speakTts(alert);
+    }
+  }
+
+  /// Tách bytes âm thanh từ data URI ("data:audio/...;base64,XXXX") hoặc base64 thô.
+  Uint8List? _decodeAudioBytes(String value) {
+    var b64 = value;
+    final marker = b64.indexOf('base64,');
+    if (marker >= 0) b64 = b64.substring(marker + 7);
+    try {
+      return base64Decode(b64);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Đọc nội dung bằng giọng máy (TTS), lặp _ttsRepeatCount lần.
+  Future<void> _speakTts(KioskAlert alert) async {
     for (int round = 1; round <= _ttsRepeatCount; round++) {
       // Nếu người dùng đã bấm "Đã hiểu", dừng phát sớm
       if (!_speaking.contains(alert.id)) break;
@@ -141,16 +217,12 @@ class _KioskHomePageState extends State<KioskHomePage> {
         await Future.delayed(_ttsRepeatGap);
       }
     }
-
-    // Sau khi phát xong tất cả các lần, tự động xác nhận nếu chưa bị dismiss
-    if (_activeAlert?.id == alert.id && _speaking.contains(alert.id)) {
-      await _dismissAlert(alert);
-    }
   }
 
   Future<void> _dismissAlert(KioskAlert alert) async {
     try {
       await _tts.stop();
+      await _audioPlayer.stop();
     } catch (_) {}
     // Xóa _speaking trước khi await để re-trigger không bị chặn
     _speaking.remove(alert.id);
@@ -158,6 +230,21 @@ class _KioskHomePageState extends State<KioskHomePage> {
       setState(() => _activeAlert = null);
     }
     await _sync.markTaskSpoken(alert.id);
+  }
+
+  /// Caregiver đã reset/hủy task (Reset Demo) -> đóng overlay đang hiện của task
+  /// đó. KHÔNG ghi Completed vì task vừa được đưa về Pending.
+  Future<void> _handleRemoteDismiss(String taskId) async {
+    if (_activeAlert?.id != taskId) return;
+    try {
+      await _tts.stop();
+      await _audioPlayer.stop();
+    } catch (_) {}
+    _speaking.remove(taskId);
+    if (mounted && _activeAlert?.id == taskId) {
+      setState(() => _activeAlert = null);
+    }
+    debugPrint('Overlay của $taskId bị đóng do caregiver reset.');
   }
 
   void _openDebugPanel() {
@@ -310,8 +397,10 @@ class _KioskHomePageState extends State<KioskHomePage> {
   @override
   void dispose() {
     _alertSub?.cancel();
+    _dismissSub?.cancel();
     _clockTimer?.cancel();
     _tts.stop();
+    _audioPlayer.dispose();
     _sync.dispose();
     super.dispose();
   }

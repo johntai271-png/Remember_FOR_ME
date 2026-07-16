@@ -59,6 +59,7 @@ export type Routine = {
   autoRun: boolean;
   period: RoutinePeriod;
   voiceEnabled: boolean;
+  voiceClip?: string | null;
   status: RoutineStatus;
   note: string;
   updatedAt?: string | number;

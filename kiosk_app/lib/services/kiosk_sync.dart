@@ -17,12 +17,15 @@ class KioskAlert {
     required this.title,
     required this.message,
     required this.isEmergency,
+    this.voiceClip,
   });
 
   final String id;
   final String title;
   final String message;
   final bool isEmergency;
+  // Nếu != null: phát giọng thu sẵn của gia đình thay cho TTS.
+  final String? voiceClip;
 }
 
 // BLE quét được trên Android/iOS/Windows(WinRT)/macOS — chỉ web là không hỗ trợ.
@@ -74,6 +77,14 @@ class KioskSyncService extends ChangeNotifier {
   final StreamController<KioskAlert> _alertController =
       StreamController<KioskAlert>.broadcast();
 
+  /// Phát ra taskId cần ĐÓNG overlay khi task không còn is_triggered
+  /// (VD caregiver bấm "Reset Demo"). UI tự tắt overlay đang hiện của id đó.
+  final StreamController<String> _dismissController =
+      StreamController<String>.broadcast();
+
+  /// Các task đang ở trạng thái triggered (để phát hiện lúc chuyển về không-trigger).
+  final Set<String> _triggeredIds = {};
+
   List<KioskTask> get tasks => _tasks;
   String get elderStatus => _elderStatus;
   String get elderName => _elderName;
@@ -82,6 +93,7 @@ class KioskSyncService extends ChangeNotifier {
   bool get bleEnabled => _bleEnabled;
   String get tagId => _tagId;
   Stream<KioskAlert> get alerts => _alertController.stream;
+  Stream<String> get dismissals => _dismissController.stream;
 
   void start() {
     _listenToFirebase();
@@ -108,12 +120,25 @@ class KioskSyncService extends ChangeNotifier {
       final tasks = KioskTask.parseList(event.snapshot.value);
       _tasks = tasks;
       notifyListeners();
+
+      // Phát hiện task trước đây triggered mà giờ hết (VD caregiver Reset Demo)
+      // -> yêu cầu UI đóng overlay đang hiện của task đó.
+      final currentTriggered =
+          tasks.where((t) => t.isTriggered).map((t) => t.id).toSet();
+      for (final id in _triggeredIds.difference(currentTriggered)) {
+        _dismissController.add(id);
+      }
+      _triggeredIds
+        ..clear()
+        ..addAll(currentTriggered);
+
       for (final task in tasks.where((t) => t.isTriggered)) {
         _queueAlert(KioskAlert(
           id: task.id,
           title: task.name,
           message: task.speakText,
           isEmergency: false,
+          voiceClip: task.voiceClip,
         ));
       }
     });
@@ -454,6 +479,7 @@ class KioskSyncService extends ChangeNotifier {
     _bleScanTimer?.cancel();
     _bleMissingTimer?.cancel();
     _alertController.close();
+    _dismissController.close();
     goOffline();
     super.dispose();
   }

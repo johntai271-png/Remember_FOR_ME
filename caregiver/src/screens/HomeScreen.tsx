@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import {
   BellRing,
   CheckCircle2,
@@ -6,13 +6,17 @@ import {
   HeartPulse,
   House,
   MapPinned,
+  Mic,
   Pencil,
   Play,
   Plus,
+  RotateCcw,
   Save,
   ShieldAlert,
+  Square,
   Tag,
   Trash2,
+  Upload,
   Volume2,
   X,
 } from "lucide-react";
@@ -93,6 +97,7 @@ export function ManagementScreen({
   onTrigger,
   onReset,
   onSave,
+  onRecordVoice,
   onOpenEmergency,
   onToggleTag,
   onAddTag,
@@ -102,6 +107,7 @@ export function ManagementScreen({
   onDisconnectTag,
   onClearCompleted,
   onResetTimeline,
+  onResetDemo,
 }: {
   routines: Routine[];
   bleTags: BleTag[];
@@ -113,6 +119,7 @@ export function ManagementScreen({
   onTrigger: (id: string) => void;
   onReset: (id: string) => void;
   onSave: (id: string) => void;
+  onRecordVoice: (id: string, clip: string | null) => void;
   onOpenEmergency: () => void;
   onToggleTag: (id: string) => void;
   onAddTag: (name: string, location: string, hardwareId: string) => Promise<boolean>;
@@ -122,6 +129,7 @@ export function ManagementScreen({
   onDisconnectTag: (id: string) => void;
   onClearCompleted: () => void;
   onResetTimeline: () => void;
+  onResetDemo: () => void;
 }) {
   const [filterPeriod, setFilterPeriod] = useState<"all" | "morning" | "afternoon" | "evening">("all");
   const [showCompletedList, setShowCompletedList] = useState(false);
@@ -139,14 +147,27 @@ export function ManagementScreen({
   return (
     <section className="space-y-6">
       <div className="card-shell p-5 sm:p-6">
-        <p className="text-base font-semibold text-slate-600">Page 2</p>
-        <h1 className="mt-2 text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">
-          Manage Tasks, Tags, and Alerts
-        </h1>
-        <p className="mt-3 max-w-3xl text-base font-medium leading-7 text-slate-600">
-          Use this page for caregiver actions like editing routines, pairing tags, and reviewing
-          the alert timeline.
-        </p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-base font-semibold text-slate-600">Page 2</p>
+            <h1 className="mt-2 text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">
+              Manage Tasks, Tags, and Alerts
+            </h1>
+            <p className="mt-3 max-w-3xl text-base font-medium leading-7 text-slate-600">
+              Use this page for caregiver actions like editing routines, pairing tags, and reviewing
+              the alert timeline.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onResetDemo}
+            title="Đưa mọi lời nhắc về Pending và xoá Alerts Timeline (giữ giọng đã ghi)"
+            className="inline-flex shrink-0 items-center gap-2 rounded-full border-2 border-red-200 bg-red-50 px-5 py-3 text-base font-bold text-red-600 transition hover:bg-red-100"
+          >
+            <RotateCcw className="h-5 w-5" />
+            Reset Demo
+          </button>
+        </div>
       </div>
 
       <section className="grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
@@ -215,6 +236,7 @@ export function ManagementScreen({
                 onTrigger={onTrigger}
                 onReset={onReset}
                 onSave={onSave}
+                onRecordVoice={onRecordVoice}
               />
             ))
           )}
@@ -714,6 +736,7 @@ function RoutineCard({
   onTrigger,
   onReset,
   onSave,
+  onRecordVoice,
 }: {
   routine: Routine;
   onModeChange: (id: string, mode: ViewMode) => void;
@@ -721,6 +744,7 @@ function RoutineCard({
   onTrigger: (id: string) => void;
   onReset: (id: string) => void;
   onSave: (id: string) => void;
+  onRecordVoice: (id: string, clip: string | null) => void;
 }) {
   const isCompleted = routine.status === "Completed";
   const isRunning = routine.status === "Running";
@@ -841,6 +865,17 @@ function RoutineCard({
             />
           </div>
 
+          <FieldGroup
+            label="Giọng gia đình (phát thay giọng máy)"
+            input={
+              <VoiceRecorder
+                value={routine.voiceClip}
+                onChange={(clip) => onRecordVoice(routine.id, clip)}
+                disabled={isRunning}
+              />
+            }
+          />
+
           <div className="grid gap-4 lg:grid-cols-2">
             <ActionButton
               icon={Play}
@@ -900,6 +935,215 @@ function RoutineCard({
   );
 }
 
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+// ~900KB: dư cho một câu nói ngắn dạng webm/opus, vẫn an toàn cho Realtime Database.
+const MAX_VOICE_BYTES = 900_000;
+
+function VoiceRecorder({
+  value,
+  onChange,
+  disabled = false,
+}: {
+  value?: string | null;
+  onChange: (clip: string | null) => void;
+  disabled?: boolean;
+}) {
+  const [recording, setRecording] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const hasClip = typeof value === "string" && value.length > 0;
+
+  async function startRecording() {
+    if (disabled || busy) return;
+    setError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      chunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunksRef.current.push(event.data);
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        if (blob.size > MAX_VOICE_BYTES) {
+          setError("Đoạn ghi quá dài — hãy ghi ngắn hơn (dưới ~15 giây).");
+          setBusy(false);
+          return;
+        }
+        try {
+          onChange(await blobToDataUrl(blob));
+        } catch {
+          setError("Không xử lý được đoạn ghi.");
+        }
+        setBusy(false);
+      };
+      recorderRef.current = recorder;
+      recorder.start();
+      setRecording(true);
+    } catch {
+      setError("Không truy cập được micro. Hãy cho phép quyền micro cho trình duyệt.");
+    }
+  }
+
+  function stopRecording() {
+    const recorder = recorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
+      setBusy(true);
+      recorder.stop();
+    }
+    setRecording(false);
+  }
+
+  async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setError(null);
+    if (file.size > MAX_VOICE_BYTES) {
+      setError("File quá lớn — hãy chọn đoạn ghi ngắn (dưới ~900KB).");
+      return;
+    }
+    try {
+      onChange(await blobToDataUrl(file));
+    } catch {
+      setError("Không đọc được file âm thanh.");
+    }
+  }
+
+  function playPreview() {
+    if (!hasClip) return;
+    const audio = audioRef.current ?? new Audio();
+    audioRef.current = audio;
+    audio.src = value as string;
+    void audio.play().catch(() => setError("Trình duyệt không phát được đoạn này."));
+  }
+
+  return (
+    <div className="rounded-[18px] bg-lavender p-4">
+      <div className="flex flex-wrap items-center gap-3">
+        {recording ? (
+          <button
+            type="button"
+            onClick={stopRecording}
+            className="inline-flex items-center gap-2 rounded-full bg-red-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-red-700"
+          >
+            <Square className="h-4 w-4" />
+            Dừng ghi
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void startRecording()}
+            disabled={disabled || busy}
+            className="inline-flex items-center gap-2 rounded-full bg-brand px-5 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700 disabled:opacity-50"
+          >
+            <Mic className="h-4 w-4" />
+            {busy ? "Đang lưu..." : hasClip ? "Ghi lại" : "Ghi âm"}
+          </button>
+        )}
+
+        <label className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-slate-300 bg-white px-5 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50">
+          <Upload className="h-4 w-4" />
+          Tải lên
+          <input
+            type="file"
+            accept="audio/*"
+            className="hidden"
+            disabled={disabled}
+            onChange={(event) => void handleUpload(event)}
+          />
+        </label>
+
+        {hasClip ? (
+          <>
+            <button
+              type="button"
+              onClick={playPreview}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-5 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+            >
+              <Play className="h-4 w-4" />
+              Nghe thử
+            </button>
+            <button
+              type="button"
+              onClick={() => onChange(null)}
+              className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-5 py-2.5 text-sm font-bold text-red-600 transition hover:bg-red-100"
+            >
+              <Trash2 className="h-4 w-4" />
+              Xoá
+            </button>
+          </>
+        ) : null}
+      </div>
+
+      <p className="mt-3 text-sm font-medium text-slate-500">
+        {recording
+          ? "🔴 Đang ghi... nói lời nhắc bằng giọng của bạn rồi bấm Dừng ghi."
+          : hasClip
+            ? "✓ Đã có giọng gia đình — Kiosk sẽ phát giọng này khi nhắc, thay cho giọng máy."
+            : "Chưa có giọng — Kiosk dùng giọng máy (TTS). Ghi âm hoặc tải lên để cụ nghe giọng người thân."}
+      </p>
+      {error ? <p className="mt-2 text-sm font-semibold text-red-600">{error}</p> : null}
+    </div>
+  );
+}
+
+const ACTIVITY_META = {
+  danger: {
+    Icon: ShieldAlert,
+    label: "Khẩn cấp",
+    source: "Cảnh báo hệ thống",
+    dotBg: "bg-[#ffe1e1]",
+    dotText: "text-[#c91818]",
+    border: "border-[#ffd0d0]",
+    bg: "bg-[#fff6f6]",
+    pill: "bg-[#ffd6d6] text-[#c91818]",
+  },
+  warning: {
+    Icon: MapPinned,
+    label: "Vị trí",
+    source: "Theo dõi định vị",
+    dotBg: "bg-[#fff0cf]",
+    dotText: "text-[#b97400]",
+    border: "border-[#ffe6b0]",
+    bg: "bg-[#fffdf5]",
+    pill: "bg-[#fff3cd] text-[#b97400]",
+  },
+  success: {
+    Icon: CheckCircle2,
+    label: "Hoàn thành",
+    source: "Từ Kiosk của cụ",
+    dotBg: "bg-[#e2f5e6]",
+    dotText: "text-action",
+    border: "border-[#cdeecd]",
+    bg: "bg-[#f7fdf8]",
+    pill: "bg-[#e9f6eb] text-action",
+  },
+  info: {
+    Icon: BellRing,
+    label: "Hoạt động",
+    source: "Hệ thống",
+    dotBg: "bg-[#e6ecff]",
+    dotText: "text-brand",
+    border: "border-slate-200/80",
+    bg: "bg-lavender",
+    pill: "bg-white text-slate-700",
+  },
+} as const;
+
 function ActivityFeedCard({
   feedItems,
   onReset,
@@ -911,9 +1155,14 @@ function ActivityFeedCard({
     <section className="card-shell p-4 sm:p-5 lg:p-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">Alerts Timeline</h2>
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">Alerts Timeline</h2>
+            {feedItems.length > 0 ? (
+              <span className="pill-button bg-[#eef2ff] text-[#3558c8]">{feedItems.length} sự kiện</span>
+            ) : null}
+          </div>
           <p className="mt-2 text-base font-medium text-slate-600 sm:text-[16px]">
-            Timeline and action history are kept on the management page.
+            Nhật ký hoạt động &amp; cảnh báo theo thời gian thực.
           </p>
         </div>
         <button
@@ -926,38 +1175,47 @@ function ActivityFeedCard({
         </button>
       </div>
 
-      <div className="mt-6 space-y-4">
+      <div className="mt-6">
         {feedItems.length === 0 ? (
-          <div className="info-box">
+          <div className="info-box flex items-center gap-3">
+            <BellRing className="h-6 w-6 shrink-0 text-slate-400" />
             <p className="text-lg font-semibold text-slate-500">Chưa có cảnh báo nào.</p>
           </div>
         ) : (
-          feedItems.map((item) => (
-          <div
-            key={item.id}
-            className="rounded-[24px] border border-slate-200/80 bg-lavender px-5 py-4"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-xl font-extrabold text-slate-900">{item.title}</p>
-                <p className="mt-2 text-base font-medium text-slate-600">{item.message}</p>
-              </div>
+          <ol className="relative space-y-4">
+            {feedItems.length > 1 ? (
               <span
-                className={`pill-button whitespace-nowrap ${
-                  item.level === "danger"
-                    ? "bg-[#ffd6d6] text-[#c91818]"
-                    : item.level === "warning"
-                      ? "bg-[#fff3cd] text-[#b97400]"
-                      : item.level === "success"
-                        ? "bg-[#e9f6eb] text-action"
-                        : "bg-white text-slate-700"
-                }`}
-              >
-                {item.timestampLabel}
-              </span>
-            </div>
-          </div>
-          ))
+                aria-hidden
+                className="pointer-events-none absolute left-[21px] top-6 bottom-6 w-0.5 bg-slate-200"
+              />
+            ) : null}
+            {feedItems.map((item) => {
+              const meta = ACTIVITY_META[item.level] ?? ACTIVITY_META.info;
+              const Icon = meta.Icon;
+              return (
+                <li key={item.id} className="relative flex gap-4">
+                  <span
+                    className={`relative z-10 flex h-11 w-11 shrink-0 items-center justify-center rounded-full ring-4 ring-white ${meta.dotBg} ${meta.dotText}`}
+                  >
+                    <Icon className="h-5 w-5" />
+                  </span>
+                  <div className={`flex-1 rounded-[20px] border ${meta.border} ${meta.bg} px-5 py-4`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className={`pill-button ${meta.pill}`}>{meta.label}</span>
+                        <span className="text-sm font-semibold text-slate-500">{meta.source}</span>
+                      </div>
+                      <span className="whitespace-nowrap text-sm font-semibold text-slate-500">
+                        {item.timestampLabel}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-xl font-extrabold text-slate-900">{item.title}</p>
+                    <p className="mt-1 text-base font-medium text-slate-600">{item.message}</p>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
         )}
       </div>
     </section>

@@ -379,6 +379,7 @@ export default function App() {
         autoRun: !!value.is_auto,
         period: normalizeRoutinePeriod(value.period, value.scheduled_time),
         voiceEnabled: !!(value.voiceEnabled ?? value.voice ?? false),
+        voiceClip: typeof value.voiceClip === "string" && value.voiceClip ? value.voiceClip : null,
         status: value.status || "Pending",
         note: buildTaskNote(value),
         updatedAt:
@@ -562,6 +563,23 @@ export default function App() {
     }
   }
 
+  async function handleRecordVoice(id: string, clip: string | null) {
+    // Optimistic local update so the recorder reflects instantly.
+    setRoutines((current) =>
+      current.map((routine) => (routine.id === id ? { ...routine, voiceClip: clip } : routine)),
+    );
+    try {
+      await updateFamilyPath(familyId, `tasks/${id}`, {
+        voiceClip: clip,
+        voiceClipUpdatedAt: clip ? Date.now() : null,
+      });
+      pushToast(clip ? "Đã lưu giọng gia đình cho lời nhắc." : "Đã xoá giọng gia đình.");
+    } catch (error) {
+      console.error(error);
+      pushToast("Không lưu được giọng gia đình.");
+    }
+  }
+
   function handleFieldChange<K extends keyof Routine>(
     id: string,
     key: K,
@@ -695,6 +713,32 @@ export default function App() {
     } catch (error) {
       console.error(error);
       pushToast("Failed to reset timeline.");
+    }
+  }
+
+  // Reset toàn bộ về trạng thái sạch cho một lượt demo mới:
+  // mọi lời nhắc -> Pending (giữ nguyên tên/giờ/GIỌNG đã ghi) + xoá Alerts Timeline.
+  async function handleResetDemo() {
+    const ok = window.confirm(
+      "Reset demo?\n\n• Đưa tất cả lời nhắc về Pending\n• Xoá sạch Alerts Timeline\n\n(Giữ nguyên tên, giờ và giọng gia đình đã ghi.)",
+    );
+    if (!ok) return;
+    try {
+      const updates: Record<string, any> = { events: null };
+      routines.forEach((routine) => {
+        updates[`tasks/${routine.id}/status`] = "Pending";
+        updates[`tasks/${routine.id}/is_triggered`] = false;
+        updates[`tasks/${routine.id}/triggeredAt`] = null;
+        updates[`tasks/${routine.id}/spokenAt`] = null;
+        updates[`tasks/${routine.id}/completedAt`] = null;
+        updates[`tasks/${routine.id}/triggerMode`] = null;
+        updates[`tasks/${routine.id}/updatedAt`] = Date.now();
+      });
+      await updateFamilyPath(familyId, "", updates);
+      pushToast("Đã reset demo — mọi lời nhắc về Pending, timeline đã xoá.");
+    } catch (error) {
+      console.error(error);
+      pushToast("Reset demo thất bại.");
     }
   }
 
@@ -1075,6 +1119,7 @@ export default function App() {
           onTrigger={(id) => void handleTrigger(id)}
           onReset={(id) => void handleReset(id)}
           onSave={(id) => void handleSave(id)}
+          onRecordVoice={(id, clip) => void handleRecordVoice(id, clip)}
           onOpenEmergency={() => setShowEmergencyModal(true)}
           onToggleTag={(id) => void handleToggleTag(id)}
           onAddTag={(name, location, hardwareId) => handleAddTag(name, location, hardwareId)}
@@ -1084,6 +1129,7 @@ export default function App() {
           onDisconnectTag={(id) => void handleDisconnectTag(id)}
           onClearCompleted={() => void handleClearCompleted()}
           onResetTimeline={() => void handleResetTimeline()}
+          onResetDemo={() => void handleResetDemo()}
         />
       );
     }
