@@ -236,7 +236,10 @@ export function LiveSafetyMap({
         </span>
       </div>
 
-      <div className="mt-6 overflow-hidden rounded-[28px] border border-slate-200/80">
+      {/* `isolate` tạo stacking context riêng: nhốt z-index nội bộ của Leaflet
+          (pane 400, control 800, top/bottom 1000) lại trong khung map, tránh
+          map đè lên thanh điều hướng dưới cùng (z-40) khi cuộn trang. */}
+      <div className="isolate mt-6 overflow-hidden rounded-[28px] border border-slate-200/80">
         <div ref={containerRef} className="h-[240px] w-full sm:h-[280px]" />
       </div>
 
