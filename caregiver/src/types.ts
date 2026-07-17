@@ -1,4 +1,6 @@
-export type RoutineStatus = "Completed" | "Pending" | "Running";
+// "No response": kiosk đã phát lời nhắc nhưng cụ không bấm xác nhận trong thời
+// gian chờ. Cố tình tách khỏi "Completed" — hệ thống không bịa ra việc cụ đã làm.
+export type RoutineStatus = "Completed" | "Pending" | "Running" | "No response";
 export type ViewMode = "view" | "edit";
 export type AppTab = "home" | "history" | "settings";
 export type RoutinePeriod = "morning" | "afternoon" | "evening";
@@ -81,6 +83,8 @@ export type BleTag = {
 
 export type AlertFeedItem = {
   id: string;
+  /** Loại sự kiện thô từ Firebase: complete | tracker_alert | emergency | no_response … */
+  kind?: string;
   level: "info" | "success" | "warning" | "danger";
   title: string;
   message: string;

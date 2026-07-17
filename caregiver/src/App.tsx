@@ -370,6 +370,9 @@ export default function App() {
       setBleTags(list);
     });
 
+    let prevTaskStatuses = new Map<string, string>();
+    let isFirstTasks = true;
+
     const unsubTasks = subscribeToFamilyPath(familyId, "tasks", (snapshot) => {
       const data = snapshot.val() || {};
       const list = Object.entries(data).map(([id, value]: [string, any]) => ({
@@ -393,6 +396,25 @@ export default function App() {
 
       list.sort((a, b) => a.time.localeCompare(b.time));
 
+      // Cụ được nhắc nhưng không xác nhận -> báo người thân. Chỉ bắn đúng lúc
+      // CHUYỂN sang "No response", và bỏ qua lần tải đầu để không báo lại
+      // những cảnh cũ đã nằm sẵn trên Firebase.
+      if (!isFirstTasks) {
+        list.forEach((routine) => {
+          if (
+            routine.status === "No response" &&
+            prevTaskStatuses.get(routine.id) !== "No response"
+          ) {
+            showSystemNotification(
+              "⚠️ Không có phản hồi",
+              `${routine.name} — người thân chưa xác nhận lời nhắc.`,
+            );
+          }
+        });
+      }
+      prevTaskStatuses = new Map(list.map((routine) => [routine.id, routine.status]));
+      isFirstTasks = false;
+
       setRoutines((current) =>
         list.map((item) => {
           const existing = current.find((routine) => routine.id === item.id);
@@ -410,12 +432,13 @@ export default function App() {
       }
       const list = Object.entries(data).map(([id, val]: [string, any]) => ({
         id,
+        kind: typeof val.type === "string" ? val.type : "",
         level:
           val.type === "emergency"
             ? "danger"
             : val.type === "complete"
               ? "success"
-              : val.type === "tracker_alert"
+              : val.type === "tracker_alert" || val.type === "no_response"
                 ? "warning"
                 : "info",
         title: val.title || "Activity Log",

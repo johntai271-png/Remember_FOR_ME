@@ -104,6 +104,11 @@ class _KioskHomePageState extends State<KioskHomePage> {
   // Khoảng dừng giữa các lần nhắc (1.5 giây)
   static const Duration _ttsRepeatGap = Duration(milliseconds: 1500);
 
+  /// Sau khi đọc xong, overlay Ở LẠI chờ cụ bấm "Đã hiểu" trong khoảng này.
+  /// Hết giờ mà không ai bấm -> ghi "No response" (KHÔNG BAO GIỜ ghi Completed
+  /// thay cụ — hệ thống không được bịa ra việc cụ đã xác nhận).
+  static const Duration _noResponseTimeout = Duration(seconds: 60);
+
   Future<void> _handleAlert(KioskAlert alert) async {
     if (_speaking.contains(alert.id)) return;
     _speaking.add(alert.id);
@@ -125,10 +130,45 @@ class _KioskHomePageState extends State<KioskHomePage> {
       await _speakTts(alert);
     }
 
-    // Sau khi phát xong, tự động xác nhận nếu chưa bị dismiss
-    if (_activeAlert?.id == alert.id && _speaking.contains(alert.id)) {
-      await _dismissAlert(alert);
+    if (alert.isEmergency) {
+      // SOS: đọc xong thì đóng. markTaskSpoken chỉ tắt cờ emergency, không ghi
+      // Completed giả nên an toàn.
+      if (_activeAlert?.id == alert.id && _speaking.contains(alert.id)) {
+        await _dismissAlert(alert);
+      }
+      return;
     }
+
+    // Lời nhắc: KHÔNG tự xác nhận thay cụ. Overlay ở lại chờ cụ bấm "Đã hiểu".
+    await _waitForAcknowledgement(alert);
+  }
+
+  /// Giữ overlay chờ cụ bấm "Đã hiểu". Thoát sớm nếu cụ đã bấm (_speaking bị
+  /// xoá trong _dismissAlert) hoặc caregiver đã reset (_handleRemoteDismiss).
+  Future<void> _waitForAcknowledgement(KioskAlert alert) async {
+    final deadline = DateTime.now().add(_noResponseTimeout);
+    while (DateTime.now().isBefore(deadline)) {
+      if (!_speaking.contains(alert.id) || _activeAlert?.id != alert.id) return;
+      await Future.delayed(const Duration(milliseconds: 500));
+    }
+    if (_activeAlert?.id == alert.id && _speaking.contains(alert.id)) {
+      await _timeoutAlert(alert);
+    }
+  }
+
+  /// Hết thời gian chờ mà cụ không phản hồi: đóng overlay và báo TRUNG THỰC
+  /// ("No response"), không đánh dấu Completed.
+  Future<void> _timeoutAlert(KioskAlert alert) async {
+    try {
+      await _tts.stop();
+      await _audioPlayer.stop();
+    } catch (_) {}
+    _speaking.remove(alert.id);
+    if (mounted && _activeAlert?.id == alert.id) {
+      setState(() => _activeAlert = null);
+    }
+    debugPrint('Không có phản hồi cho ${alert.id} sau $_noResponseTimeout.');
+    await _sync.markTaskNoResponse(alert.id);
   }
 
   /// Phát giọng thu sẵn của gia đình (data URI base64), lặp 2 lần cho người cao

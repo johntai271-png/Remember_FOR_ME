@@ -258,6 +258,50 @@ class KioskSyncService extends ChangeNotifier {
     });
   }
 
+  /// Cụ KHÔNG phản hồi trong thời gian chờ.
+  ///
+  /// Cố tình KHÔNG ghi 'Completed': hệ thống chỉ được báo cụ đã làm khi cụ thật
+  /// sự bấm "Đã hiểu". Ở đây ta ghi nhận đúng thứ mình biết — lời nhắc đã phát
+  /// nhưng không có ai xác nhận — để người thân tự quyết định có cần kiểm tra.
+  Future<void> markTaskNoResponse(String taskId) async {
+    String taskName = 'Routine';
+
+    if (taskId.startsWith('reminder_')) {
+      final key = taskId.replaceFirst('reminder_', '');
+      taskName = key == 'morning'
+          ? 'Morning routine'
+          : key == 'noon'
+              ? 'Lunch routine'
+              : 'Evening routine';
+      await _familyRef.child('reminders/$key').update({
+        'is_triggered': false,
+        'triggeredAt': null,
+      });
+    } else {
+      try {
+        final task = _tasks.firstWhere((t) => t.id == taskId);
+        taskName = task.name;
+      } catch (_) {}
+
+      await _familyRef.child('tasks/$taskId').update({
+        'is_triggered': false,
+        'status': 'No response',
+        'spokenAt': ServerValue.timestamp,
+        'noResponseAt': ServerValue.timestamp,
+        'completedAt': null,
+      });
+    }
+
+    final eventRef = _familyRef.child('events').push();
+    await eventRef.set({
+      'type': 'no_response',
+      'title': 'No response',
+      'message': '"$taskName" was announced but $_elderName did not confirm.',
+      'timestamp': ServerValue.timestamp,
+      'by': 'Kiosk',
+    });
+  }
+
   /// Helper tĩnh parse bool (dùng trong listener reminders/ không có context KioskTask)
   static bool _asBoolStatic(Object? value) {
     if (value is bool) return value;

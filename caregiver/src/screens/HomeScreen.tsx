@@ -748,11 +748,14 @@ function RoutineCard({
 }) {
   const isCompleted = routine.status === "Completed";
   const isRunning = routine.status === "Running";
+  const isNoResponse = routine.status === "No response";
   const badgeClasses = isCompleted
     ? "bg-[#e9f6eb] text-action"
     : isRunning
       ? "bg-yellow-100 text-yellow-800 animate-pulse"
-      : "bg-[#dfe8ff] text-slate-600";
+      : isNoResponse
+        ? "bg-[#ffe0c7] text-[#c2410c]"
+        : "bg-[#dfe8ff] text-slate-600";
 
   return (
     <article className="card-shell p-4 sm:p-5 lg:p-6">
@@ -763,6 +766,8 @@ function RoutineCard({
               <CheckCircle2 className="h-5 w-5" />
             ) : isRunning ? (
               <span className="inline-flex h-5 w-5 items-center justify-center font-bold">◔</span>
+            ) : isNoResponse ? (
+              <BellRing className="h-5 w-5" />
             ) : (
               <Clock3 className="h-5 w-5" />
             )}
@@ -1144,6 +1149,24 @@ const ACTIVITY_META = {
   },
 } as const;
 
+// "Không phản hồi" cũng là level warning như cảnh báo vị trí, nên phải tách
+// riêng theo `kind` để không bị gắn nhầm nhãn/icon định vị.
+const NO_RESPONSE_META = {
+  Icon: Clock3,
+  label: "Không phản hồi",
+  source: "Cụ chưa xác nhận",
+  dotBg: "bg-[#ffe8d6]",
+  dotText: "text-[#c2410c]",
+  border: "border-[#fed7aa]",
+  bg: "bg-[#fff8f3]",
+  pill: "bg-[#ffe0c7] text-[#c2410c]",
+} as const;
+
+function activityMeta(item: AlertFeedItem) {
+  if (item.kind === "no_response") return NO_RESPONSE_META;
+  return ACTIVITY_META[item.level] ?? ACTIVITY_META.info;
+}
+
 function ActivityFeedCard({
   feedItems,
   onReset,
@@ -1190,7 +1213,7 @@ function ActivityFeedCard({
               />
             ) : null}
             {feedItems.map((item) => {
-              const meta = ACTIVITY_META[item.level] ?? ACTIVITY_META.info;
+              const meta = activityMeta(item);
               const Icon = meta.Icon;
               return (
                 <li key={item.id} className="relative flex gap-4">
