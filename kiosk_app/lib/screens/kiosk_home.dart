@@ -109,6 +109,9 @@ class _KioskHomePageState extends State<KioskHomePage> {
   /// thay cụ — hệ thống không được bịa ra việc cụ đã xác nhận).
   static const Duration _noResponseTimeout = Duration(seconds: 60);
 
+  /// Nghỉ giữa hai lần nhắc lại (giọng gia đình / TTS) trong lúc chờ cụ bấm.
+  static const Duration _announceGap = Duration(seconds: 3);
+
   Future<void> _handleAlert(KioskAlert alert) async {
     if (_speaking.contains(alert.id)) return;
     _speaking.add(alert.id);
@@ -122,37 +125,87 @@ class _KioskHomePageState extends State<KioskHomePage> {
 
     if (mounted) setState(() => _activeAlert = alert);
 
-    // Ưu tiên giọng thu sẵn của gia đình; không có (hoặc lỗi) thì dùng giọng máy.
-    final clip = alert.voiceClip;
-    if (clip != null && clip.isNotEmpty) {
-      await _playVoiceClip(alert, clip);
-    } else {
-      await _speakTts(alert);
-    }
-
     if (alert.isEmergency) {
-      // SOS: đọc xong thì đóng. markTaskSpoken chỉ tắt cờ emergency, không ghi
-      // Completed giả nên an toàn.
+      // SOS: đọc vài lần rồi đóng. markTaskSpoken chỉ tắt cờ emergency, an toàn.
+      await _speakTts(alert);
       if (_activeAlert?.id == alert.id && _speaking.contains(alert.id)) {
         await _dismissAlert(alert);
       }
       return;
     }
 
-    // Lời nhắc: KHÔNG tự xác nhận thay cụ. Overlay ở lại chờ cụ bấm "Đã hiểu".
-    await _waitForAcknowledgement(alert);
+    // Lời nhắc: lặp lại tới khi cụ bấm "Đã hiểu" hoặc hết thời gian chờ.
+    await _announceUntilAcknowledged(alert);
   }
 
-  /// Giữ overlay chờ cụ bấm "Đã hiểu". Thoát sớm nếu cụ đã bấm (_speaking bị
-  /// xoá trong _dismissAlert) hoặc caregiver đã reset (_handleRemoteDismiss).
-  Future<void> _waitForAcknowledgement(KioskAlert alert) async {
+  /// Lặp lại lời nhắc — giọng gia đình, hoặc TTS nếu không có/không phát được —
+  /// LIÊN TỤC tới khi cụ bấm "Đã hiểu" (thoát ngay) hoặc hết _noResponseTimeout.
+  /// Hết giờ mà không ai bấm -> "No response" (không tự nhận thay cụ).
+  Future<void> _announceUntilAcknowledged(KioskAlert alert) async {
+    final bytes = _decodeAudioBytes(alert.voiceClip ?? '');
+    var useClip = bytes != null && bytes.isNotEmpty;
     final deadline = DateTime.now().add(_noResponseTimeout);
-    while (DateTime.now().isBefore(deadline)) {
-      if (!_speaking.contains(alert.id) || _activeAlert?.id != alert.id) return;
-      await Future.delayed(const Duration(milliseconds: 500));
+    var round = 0;
+
+    while (_speaking.contains(alert.id) &&
+        _activeAlert?.id == alert.id &&
+        DateTime.now().isBefore(deadline)) {
+      round++;
+      if (useClip) {
+        try {
+          await _playClipOnce(bytes!);
+          debugPrint('Phát giọng gia đình lần $round cho ${alert.id}');
+        } catch (e) {
+          debugPrint('Phát giọng gia đình lỗi ($e) — chuyển sang TTS.');
+          useClip = false;
+          continue; // đọc TTS ngay ở vòng kế
+        }
+      } else {
+        await _speakOnce(alert);
+        debugPrint('TTS lần $round cho ${alert.id}');
+      }
+      // Nghỉ giữa hai lần nhắc, nhưng thoát ngay nếu cụ bấm.
+      await _interruptibleGap(alert, _announceGap);
     }
+
     if (_activeAlert?.id == alert.id && _speaking.contains(alert.id)) {
       await _timeoutAlert(alert);
+    }
+  }
+
+  /// Phát clip giọng gia đình đúng MỘT lần (BytesSource ổn định trên web).
+  Future<void> _playClipOnce(Uint8List bytes) async {
+    // Đăng ký "phát xong" TRƯỚC khi play để không bỏ lỡ với clip ngắn; timeout
+    // chỉ là chốt an toàn khi nền web không bắn onPlayerComplete.
+    final done = _audioPlayer.onPlayerComplete.first
+        .then<bool>((_) => true)
+        .catchError((_) => false);
+    await _audioPlayer.stop();
+    await _audioPlayer.play(BytesSource(bytes));
+    await done.timeout(const Duration(seconds: 12), onTimeout: () => false);
+  }
+
+  /// Đọc nội dung bằng giọng máy đúng MỘT lần (tự chọn vi-VN / en-US).
+  Future<void> _speakOnce(KioskAlert alert) async {
+    await _tts.stop();
+    final hasVi = RegExp(r'[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệđìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵ]')
+        .hasMatch(alert.message.toLowerCase());
+    if (hasVi) {
+      await _tts.setLanguage('vi-VN');
+      await _tts.setSpeechRate(0.52);
+    } else {
+      await _tts.setLanguage('en-US');
+      await _tts.setSpeechRate(0.48);
+    }
+    await _tts.speak(alert.message);
+  }
+
+  /// Nghỉ giữa các lần nhắc nhưng thoát NGAY khi cụ bấm / caregiver reset.
+  Future<void> _interruptibleGap(KioskAlert alert, Duration total) async {
+    final end = DateTime.now().add(total);
+    while (DateTime.now().isBefore(end)) {
+      if (!_speaking.contains(alert.id) || _activeAlert?.id != alert.id) return;
+      await Future.delayed(const Duration(milliseconds: 200));
     }
   }
 
@@ -171,50 +224,6 @@ class _KioskHomePageState extends State<KioskHomePage> {
     await _sync.markTaskNoResponse(alert.id);
   }
 
-  /// Phát giọng thu sẵn của gia đình (data URI base64), lặp 2 lần cho người cao
-  /// tuổi. Người dùng bấm "Đã hiểu" bất kỳ lúc nào để dừng sớm. Nếu phát lỗi
-  /// (định dạng không hỗ trợ...) thì tự động rơi về TTS.
-  Future<void> _playVoiceClip(KioskAlert alert, String clip) async {
-    // Giải mã data URI base64 -> bytes. Phát bằng BytesSource (ổn định trên web,
-    // tránh lỗi phát data URI của audioplayers trên trình duyệt).
-    final bytes = _decodeAudioBytes(clip);
-    if (bytes == null || bytes.isEmpty) {
-      debugPrint('voiceClip không giải mã được — chuyển sang TTS.');
-      if (_speaking.contains(alert.id)) await _speakTts(alert);
-      return;
-    }
-
-    const int repeat = 2;
-    var playedOk = false;
-    for (int round = 1; round <= repeat; round++) {
-      if (!_speaking.contains(alert.id)) break;
-      try {
-        // Lắng nghe "phát xong" TRƯỚC khi play để không bỏ lỡ với clip ngắn.
-        // Timeout chỉ là chốt an toàn (một số nền web không bắn onPlayerComplete);
-        // KHÔNG coi timeout là lỗi để tránh chen TTS đè lên giọng đang phát.
-        final done = _audioPlayer.onPlayerComplete.first
-            .then<bool>((_) => true)
-            .catchError((_) => false);
-        await _audioPlayer.stop();
-        await _audioPlayer.play(BytesSource(bytes));
-        playedOk = true;
-        debugPrint('Phát giọng gia đình lần $round/$repeat cho ${alert.id}');
-        await done.timeout(const Duration(seconds: 12), onTimeout: () => false);
-      } catch (e) {
-        debugPrint('Phát giọng gia đình lỗi ($e).');
-        break;
-      }
-      if (round < repeat && _speaking.contains(alert.id)) {
-        await Future.delayed(_ttsRepeatGap);
-      }
-    }
-
-    // Chỉ fallback TTS khi thực sự KHÔNG phát được clip (play ném lỗi).
-    if (!playedOk && _speaking.contains(alert.id)) {
-      await _speakTts(alert);
-    }
-  }
-
   /// Tách bytes âm thanh từ data URI ("data:audio/...;base64,XXXX") hoặc base64 thô.
   Uint8List? _decodeAudioBytes(String value) {
     var b64 = value;
@@ -227,31 +236,18 @@ class _KioskHomePageState extends State<KioskHomePage> {
     }
   }
 
-  /// Đọc nội dung bằng giọng máy (TTS), lặp _ttsRepeatCount lần.
+  /// Đọc nội dung bằng giọng máy (TTS), lặp _ttsRepeatCount lần. Dùng cho SOS.
   Future<void> _speakTts(KioskAlert alert) async {
     for (int round = 1; round <= _ttsRepeatCount; round++) {
       // Nếu người dùng đã bấm "Đã hiểu", dừng phát sớm
       if (!_speaking.contains(alert.id)) break;
-
       try {
-        await _tts.stop();
-        // Tự động phân tích xem chuỗi có ký tự tiếng Việt hay không
-        final hasVi = RegExp(r'[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệđìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵ]')
-            .hasMatch(alert.message.toLowerCase());
-        if (hasVi) {
-          await _tts.setLanguage('vi-VN');
-          await _tts.setSpeechRate(0.52); // Tốc độ nói tiếng Việt
-        } else {
-          await _tts.setLanguage('en-US');
-          await _tts.setSpeechRate(0.48); // Tốc độ nói tiếng Anh
-        }
-        await _tts.speak(alert.message);
-        debugPrint('TTS lần $round/$_ttsRepeatCount (isVi=$hasVi): ${alert.message}');
+        await _speakOnce(alert);
+        debugPrint('TTS lần $round/$_ttsRepeatCount: ${alert.message}');
       } catch (e) {
         debugPrint('TTS speak failed (round $round): $e');
         break;
       }
-
       // Dừng giữa các lần nhắc (trừ lần cuối)
       if (round < _ttsRepeatCount && _speaking.contains(alert.id)) {
         await Future.delayed(_ttsRepeatGap);
